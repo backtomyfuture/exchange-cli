@@ -52,6 +52,14 @@ class ConfigManager:
             return False
         return None
 
+    def _normalize_text(self, value: str | None, *, lower: bool = False) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        return normalized.lower() if lower else normalized
+
     def _derive_username_from_email(self, email: str | None, domain: str | None) -> str | None:
         if not email or not domain:
             return None
@@ -93,29 +101,41 @@ class ConfigManager:
         auth_type: str = "ntlm",
         no_verify_ssl: bool = False,
     ) -> None:
-        config = self.load_config() or {"version": 1, "default_account": email, "accounts": {}}
-        config["accounts"][email] = {
-            "server": server,
-            "username": username,
+        normalized_email = self._normalize_text(email)
+        normalized_server = self._normalize_text(server)
+        normalized_username = self._normalize_text(username)
+        normalized_auth_type = self._normalize_text(auth_type, lower=True) or "ntlm"
+
+        if not normalized_email:
+            raise ValueError("email is required")
+        if not normalized_server:
+            raise ValueError("server is required")
+        if not normalized_username:
+            raise ValueError("username is required")
+
+        config = self.load_config() or {"version": 1, "default_account": normalized_email, "accounts": {}}
+        config["accounts"][normalized_email] = {
+            "server": normalized_server,
+            "username": normalized_username,
             "password": self._encrypt(password),
-            "auth_type": auth_type,
+            "auth_type": normalized_auth_type,
             "no_verify_ssl": bool(no_verify_ssl),
         }
         if not config.get("default_account"):
-            config["default_account"] = email
+            config["default_account"] = normalized_email
         self._save_config(config)
 
     def get_account_credentials(self, email: str | None) -> dict | None:
-        env_server = os.environ.get("EXCHANGE_SERVER")
-        env_username = os.environ.get("EXCHANGE_USERNAME")
+        env_server = self._normalize_text(os.environ.get("EXCHANGE_SERVER"))
+        env_username = self._normalize_text(os.environ.get("EXCHANGE_USERNAME"))
         env_password = os.environ.get("EXCHANGE_PASSWORD")
-        env_auth = os.environ.get("EXCHANGE_AUTH_TYPE")
-        env_domain = os.environ.get("EXCHANGE_DOMAIN")
-        env_email_suffix = os.environ.get("EXCHANGE_EMAIL_SUFFIX")
-        env_email = os.environ.get("EXCHANGE_EMAIL")
+        env_auth = self._normalize_text(os.environ.get("EXCHANGE_AUTH_TYPE"), lower=True)
+        env_domain = self._normalize_text(os.environ.get("EXCHANGE_DOMAIN"))
+        env_email_suffix = self._normalize_text(os.environ.get("EXCHANGE_EMAIL_SUFFIX"))
+        env_email = self._normalize_text(os.environ.get("EXCHANGE_EMAIL"))
         env_no_verify_ssl = self._parse_bool(os.environ.get("EXCHANGE_NO_VERIFY_SSL"))
 
-        requested_email = email or env_email
+        requested_email = self._normalize_text(email) or env_email
 
         if env_server and env_password and (env_username or env_domain):
             resolved_email = requested_email
@@ -137,14 +157,19 @@ class ConfigManager:
         if not config:
             return None
 
-        target = email or config.get("default_account")
+        target = self._normalize_text(email) or self._normalize_text(config.get("default_account"))
         accounts = config.get("accounts", {})
-        if not target or target not in accounts:
+        if target not in accounts:
+            trimmed_keys = {self._normalize_text(key): value for key, value in accounts.items()}
+            account = trimmed_keys.get(target)
+        else:
+            account = accounts[target]
+
+        if not target or account is None:
             return None
 
-        account = accounts[target]
         resolved_email = target
-        resolved_username = env_username or account.get("username")
+        resolved_username = env_username or self._normalize_text(account.get("username"))
         if not resolved_username:
             resolved_username = self._derive_username_from_email(resolved_email, env_domain)
         if not resolved_email:
@@ -155,10 +180,10 @@ class ConfigManager:
 
         return {
             "email": resolved_email,
-            "server": env_server or account["server"],
+            "server": env_server or self._normalize_text(account.get("server")),
             "username": resolved_username,
             "password": env_password or self._decrypt(account["password"]),
-            "auth_type": env_auth or account.get("auth_type", "ntlm"),
+            "auth_type": env_auth or self._normalize_text(account.get("auth_type"), lower=True) or "ntlm",
             "no_verify_ssl": no_verify_ssl,
         }
 

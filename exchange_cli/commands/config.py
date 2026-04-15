@@ -13,6 +13,15 @@ from ..core.output import OutputFormatter
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
+def _normalize_text(value: str | None, *, lower: bool = False) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized.lower() if lower else normalized
+
+
 def _derive_email_from_username(username: str | None, suffix: str | None) -> str | None:
     if not username or not suffix:
         return None
@@ -35,11 +44,22 @@ def _test_connection(
     no_verify_ssl=False,
 ) -> bool:
     try:
+        normalized_server = _normalize_text(server)
+        normalized_username = _normalize_text(username)
+        normalized_auth_type = _normalize_text(auth_type, lower=True) or "ntlm"
+        normalized_primary_smtp_address = _normalize_text(primary_smtp_address) or normalized_username
+        if not normalized_server or not normalized_username:
+            return False
+
         _configure_http_adapter_from_env(no_verify_ssl=no_verify_ssl)
-        credentials = Credentials(username, password)
-        config = Configuration(server=server, credentials=credentials, auth_type=_resolve_auth_type(auth_type))
+        credentials = Credentials(normalized_username, password)
+        config = Configuration(
+            server=normalized_server,
+            credentials=credentials,
+            auth_type=_resolve_auth_type(normalized_auth_type),
+        )
         account = Account(
-            primary_smtp_address=primary_smtp_address or username,
+            primary_smtp_address=normalized_primary_smtp_address,
             config=config,
             autodiscover=False,
             access_type=DELEGATE,
@@ -105,6 +125,11 @@ def config_init(ctx):
         email = click.prompt("Email address", type=str, default=email_default, show_default=True)
     else:
         email = click.prompt("Email address", type=str)
+
+    server = _normalize_text(server) or server
+    username = _normalize_text(username) or username
+    auth_type = _normalize_text(auth_type, lower=True) or auth_type
+    email = _normalize_text(email) or email
 
     no_verify_default = os.environ.get("EXCHANGE_NO_VERIFY_SSL", "").strip().lower() in TRUTHY_VALUES
     no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default)
