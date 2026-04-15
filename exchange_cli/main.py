@@ -2,6 +2,7 @@ import click
 
 from . import __version__
 from .commands.config import config
+from .commands.calendar import calendar
 from .commands.draft import draft
 from .commands.email import email
 from .commands.folder import folder
@@ -45,6 +46,7 @@ def cli(ctx, fmt, config_path, account_email, verbose):
     ctx.obj["verbose"] = verbose
 
 
+cli.add_command(calendar)
 cli.add_command(config)
 cli.add_command(draft)
 cli.add_command(email)
