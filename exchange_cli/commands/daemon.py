@@ -1,10 +1,18 @@
 """exchange-cli daemon {start,status,stop}."""
 
 import sys
+from pathlib import Path
 
 import click
 
-from ..core.daemon import build_daemon_state, daemon_ping, start_daemon, stop_daemon
+from ..core.daemon import (
+    DEFAULT_START_TIMEOUT_SECONDS,
+    build_daemon_state,
+    daemon_ping,
+    run_daemon_server,
+    start_daemon,
+    stop_daemon,
+)
 from ..core.output import OutputFormatter
 
 
@@ -15,7 +23,13 @@ def daemon(ctx):
 
 
 @daemon.command("start")
-@click.option("--wait-seconds", default=5.0, type=float, show_default=True, help="Wait timeout for daemon startup")
+@click.option(
+    "--wait-seconds",
+    default=DEFAULT_START_TIMEOUT_SECONDS,
+    type=float,
+    show_default=True,
+    help="Wait timeout for daemon startup",
+)
 @click.pass_context
 def daemon_start(ctx, wait_seconds):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
@@ -64,3 +78,10 @@ def daemon_stop(ctx):
         formatter.success({"status": "stopped", "changed": False})
         return
     formatter.success({"status": "stopped", "changed": True})
+
+
+@daemon.command("serve", hidden=True)
+@click.option("--config-dir", required=True, type=click.Path(path_type=Path))
+def daemon_serve(config_dir: Path):
+    """Internal command used by packaged binaries to host daemon."""
+    run_daemon_server(config_dir.expanduser())

@@ -29,6 +29,7 @@ PID_FILENAME = "agent.pid"
 LOG_FILENAME = "agent.log"
 RUNTIME_DIRNAME = "run"
 MAX_EVENT_BUFFER = 5000
+DEFAULT_START_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -123,14 +124,7 @@ def _spawn_daemon_process(state: DaemonState) -> None:
     if state.socket_path.exists():
         state.socket_path.unlink(missing_ok=True)
     log_handle = state.log_path.open("a", encoding="utf-8")
-    cmd = [
-        sys.executable,
-        "-m",
-        "exchange_cli.core.daemon",
-        "--serve",
-        "--config-dir",
-        str(state.config_dir),
-    ]
+    cmd = build_daemon_spawn_command(state)
     subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -141,7 +135,29 @@ def _spawn_daemon_process(state: DaemonState) -> None:
     )
 
 
-def start_daemon(state: DaemonState, timeout_seconds: float = 5.0) -> bool:
+def build_daemon_spawn_command(state: DaemonState) -> list[str]:
+    # Frozen binaries cannot run `-m exchange_cli.core.daemon`; use hidden CLI command instead.
+    if getattr(sys, "frozen", False):
+        return [
+            sys.executable,
+            "--config",
+            str(state.config_dir),
+            "daemon",
+            "serve",
+            "--config-dir",
+            str(state.config_dir),
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "exchange_cli.core.daemon",
+        "--serve",
+        "--config-dir",
+        str(state.config_dir),
+    ]
+
+
+def start_daemon(state: DaemonState, timeout_seconds: float = DEFAULT_START_TIMEOUT_SECONDS) -> bool:
     if daemon_ping(state):
         return False
     _spawn_daemon_process(state)

@@ -82,6 +82,17 @@ class TestEmailList:
         payload = json.loads(result.output)
         assert payload["data"][0]["body_preview"] == "Preview"
 
+    def test_list_falls_back_when_daemon_unavailable(self, runner, mock_conn, monkeypatch):
+        message = _mock_message("M1", "Subject 1")
+        mock_conn.inbox.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[message])
+        monkeypatch.setattr("exchange_cli.commands.email._should_use_daemon", lambda: True)
+        with patch("exchange_cli.commands.email.daemon_ping", return_value=False):
+            with patch("exchange_cli.commands.email.start_daemon", side_effect=RuntimeError("daemon boot failed")):
+                result = runner.invoke(cli, ["email", "list"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["count"] == 1
+
 
 class TestEmailRead:
     def test_read_message(self, runner, mock_conn):

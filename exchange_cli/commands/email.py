@@ -112,24 +112,29 @@ def _should_use_daemon() -> bool:
 def _list_via_daemon(ctx, folder_name, limit, unread, with_preview):
     if not _should_use_daemon():
         return None
-    state = build_daemon_state(ctx.obj.get("config_path"))
-    if not daemon_ping(state):
-        start_daemon(state, timeout_seconds=5.0)
-    response = send_daemon_request(
-        state,
-        {
-            "action": "email_list",
-            "account": ctx.obj.get("account_email"),
-            "folder": folder_name,
-            "limit": limit,
-            "unread": unread,
-            "with_preview": with_preview,
-        },
-        timeout=15.0,
-    )
-    if not response.get("ok"):
-        raise RuntimeError(response.get("error", "Daemon email list failed"))
-    return response
+    try:
+        state = build_daemon_state(ctx.obj.get("config_path"))
+        if not daemon_ping(state):
+            start_daemon(state)
+        response = send_daemon_request(
+            state,
+            {
+                "action": "email_list",
+                "account": ctx.obj.get("account_email"),
+                "folder": folder_name,
+                "limit": limit,
+                "unread": unread,
+                "with_preview": with_preview,
+            },
+            timeout=15.0,
+        )
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error", "Daemon email list failed"))
+        return response
+    except Exception as exc:
+        if ctx.obj.get("verbose"):
+            click.echo(f"Daemon unavailable, falling back to direct mode: {exc}", err=True)
+        return None
 
 
 @click.group("email")
