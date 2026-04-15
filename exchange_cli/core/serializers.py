@@ -1,5 +1,7 @@
 """Serialize exchangelib objects to plain dictionaries."""
 
+from .content_cleaner import html_to_markdown
+
 
 def _safe_str(value):
     if value is None:
@@ -50,9 +52,14 @@ def serialize_email_summary(message, include_body_preview: bool = True):
     }
 
 
-def serialize_email_detail(message):
+def serialize_email_detail(message, body_format="markdown"):
     result = serialize_email_summary(message)
-    result["body"] = _safe_str(message.body)
+    raw_body = _safe_str(message.body)
+    if body_format == "markdown" and raw_body:
+        result["body"] = html_to_markdown(raw_body)
+    else:
+        result["body"] = raw_body
+    result["body_format"] = body_format
     result["bcc"] = _serialize_mailbox_list(message.bcc_recipients)
     result["attachments"] = [serialize_attachment_summary(att) for att in (message.attachments or [])]
     return result

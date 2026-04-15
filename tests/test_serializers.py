@@ -74,7 +74,27 @@ class TestSerializeEmailDetail:
         msg = _mock_message()
         result = serialize_email_detail(msg)
         assert "body" in result
+
+    def test_default_converts_body_to_markdown(self):
+        msg = _mock_message(body="<html><body><p>Hello <b>World</b></p></body></html>")
+        result = serialize_email_detail(msg)
+        assert "<html>" not in result["body"]
+        assert "<p>" not in result["body"]
+        assert "Hello" in result["body"]
+        assert "World" in result["body"]
+        assert result["body_format"] == "markdown"
+
+    def test_html_format_preserves_raw_body(self):
+        msg = _mock_message(body="<p>Full body</p>")
+        result = serialize_email_detail(msg, body_format="html")
         assert result["body"] == "<p>Full body</p>"
+        assert result["body_format"] == "html"
+
+    def test_plain_text_body_passthrough(self):
+        msg = _mock_message(body="Just plain text")
+        result = serialize_email_detail(msg)
+        assert result["body"] == "Just plain text"
+        assert result["body_format"] == "markdown"
 
 
 class TestSerializeCalendarEvent:
