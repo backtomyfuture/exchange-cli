@@ -6,7 +6,6 @@ from datetime import datetime
 
 import click
 from exchangelib import Account, EWSDateTime, EWSTimeZone, FileAttachment, HTMLBody, Mailbox, Message, Q
-from exchangelib.errors import ErrorItemNotFound
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager

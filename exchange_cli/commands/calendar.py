@@ -102,7 +102,10 @@ def calendar_create(ctx, subject, start, end, location, body, attendees):
             body=body,
         )
         if attendees:
-            event.required_attendees = [Attendee(mailbox=Mailbox(email_address=addr.strip())) for addr in attendees.split(",")]
+            event.required_attendees = [
+                Attendee(mailbox=Mailbox(email_address=addr.strip()))
+                for addr in attendees.split(",")
+            ]
         event.save(send_meeting_invitations="SendToAllAndSaveCopy" if attendees else "SendToNone")
         formatter.success({"message": "Event created", "id": event.id, "subject": subject})
     except Exception as exc:

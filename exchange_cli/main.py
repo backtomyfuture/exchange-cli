@@ -1,9 +1,9 @@
 import click
 
 from . import __version__
-from .commands.contact import contact
-from .commands.config import config
 from .commands.calendar import calendar
+from .commands.config import config
+from .commands.contact import contact
 from .commands.draft import draft
 from .commands.email import email
 from .commands.folder import folder

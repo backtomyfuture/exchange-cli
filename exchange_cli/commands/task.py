@@ -5,7 +5,8 @@ from datetime import datetime
 from decimal import Decimal
 
 import click
-from exchangelib import Account, EWSDate, Task as EWSTask
+from exchangelib import Account, EWSDate
+from exchangelib import Task as EWSTask
 from exchangelib.errors import ErrorItemNotFound
 
 from ..core.config import ConfigManager

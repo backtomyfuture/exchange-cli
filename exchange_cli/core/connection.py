@@ -3,7 +3,7 @@
 import sys
 
 import click
-from exchangelib import Account, Configuration, Credentials, DELEGATE
+from exchangelib import DELEGATE, Account, Configuration, Credentials
 from exchangelib.errors import TransportError, UnauthorizedError
 
 from .config import ConfigManager
