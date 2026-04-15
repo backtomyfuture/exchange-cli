@@ -20,6 +20,8 @@ dependencies = [
     "click>=8.1,<9",
     "exchangelib>=5.0",
     "cryptography>=41.0",
+    "beautifulsoup4>=4.12",
+    "markdownify>=0.14",
 ]
 
 [project.scripts]
