@@ -1,6 +1,7 @@
 import click
 
 from . import __version__
+from .commands.contact import contact
 from .commands.config import config
 from .commands.calendar import calendar
 from .commands.draft import draft
@@ -48,6 +49,7 @@ def cli(ctx, fmt, config_path, account_email, verbose):
 
 
 cli.add_command(calendar)
+cli.add_command(contact)
 cli.add_command(config)
 cli.add_command(draft)
 cli.add_command(email)
