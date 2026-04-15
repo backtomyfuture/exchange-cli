@@ -66,6 +66,22 @@ class TestEmailList:
         result = runner.invoke(cli, ["email", "list", "--unread"])
         assert result.exit_code == 0
 
+    def test_list_defaults_to_without_preview(self, runner, mock_conn):
+        message = _mock_message("M1", "Subject 1")
+        mock_conn.inbox.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[message])
+        result = runner.invoke(cli, ["email", "list"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"][0]["body_preview"] == ""
+
+    def test_list_with_preview_flag(self, runner, mock_conn):
+        message = _mock_message("M1", "Subject 1")
+        mock_conn.inbox.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[message])
+        result = runner.invoke(cli, ["email", "list", "--with-preview"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"][0]["body_preview"] == "Preview"
+
 
 class TestEmailRead:
     def test_read_message(self, runner, mock_conn):

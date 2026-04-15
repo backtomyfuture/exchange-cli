@@ -33,7 +33,8 @@ def serialize_attachment_summary(attachment):
     }
 
 
-def serialize_email_summary(message):
+def serialize_email_summary(message, include_body_preview: bool = True):
+    body_preview = _safe_str(message.text_body)[:200] if include_body_preview and message.text_body else ""
     return {
         "id": message.id,
         "subject": message.subject or "",
@@ -45,7 +46,7 @@ def serialize_email_summary(message):
         "is_read": bool(message.is_read),
         "has_attachments": bool(message.has_attachments),
         "importance": _safe_str(message.importance),
-        "body_preview": _safe_str(message.text_body)[:200] if message.text_body else "",
+        "body_preview": body_preview,
     }
 
 

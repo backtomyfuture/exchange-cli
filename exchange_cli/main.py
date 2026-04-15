@@ -4,6 +4,7 @@ from . import __version__
 from .commands.calendar import calendar
 from .commands.config import config
 from .commands.contact import contact
+from .commands.daemon import daemon
 from .commands.draft import draft
 from .commands.email import email
 from .commands.folder import folder
@@ -52,6 +53,7 @@ cli.add_command(calendar)
 cli.add_command(contact)
 cli.add_command(config)
 cli.add_command(draft)
+cli.add_command(daemon)
 cli.add_command(email)
 cli.add_command(folder)
 cli.add_command(task)

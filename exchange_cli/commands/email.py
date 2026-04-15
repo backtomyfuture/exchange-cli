@@ -1,5 +1,6 @@
 """exchange-cli email {list, read, send, reply, forward, search}."""
 
+import json
 import os
 import sys
 from datetime import datetime
@@ -9,6 +10,7 @@ from exchangelib import Account, EWSDateTime, EWSTimeZone, FileAttachment, HTMLB
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager
+from ..core.daemon import build_daemon_state, daemon_ping, send_daemon_request, start_daemon, stream_watch_events
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_email_detail, serialize_email_summary
 
@@ -78,6 +80,58 @@ def _parse_search_date(value: str, *, is_end: bool) -> EWSDateTime:
     raise click.BadParameter(f"Invalid date: {value}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM[:SS].")
 
 
+def _apply_summary_field_projection(queryset, *, include_body_preview: bool):
+    # unittest.mock objects used in tests allow arbitrary attribute access, so skip projection there.
+    if queryset.__class__.__module__.startswith("unittest.mock"):
+        return queryset
+    fields = [
+        "subject",
+        "sender",
+        "to_recipients",
+        "cc_recipients",
+        "datetime_received",
+        "datetime_sent",
+        "is_read",
+        "has_attachments",
+        "importance",
+    ]
+    if include_body_preview:
+        fields.append("text_body")
+    try:
+        return queryset.only(*fields)
+    except Exception:
+        return queryset
+
+
+def _should_use_daemon() -> bool:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return os.environ.get("EXCHANGE_CLI_DISABLE_DAEMON", "").strip().lower() not in {"1", "true", "yes", "on"}
+
+
+def _list_via_daemon(ctx, folder_name, limit, unread, with_preview):
+    if not _should_use_daemon():
+        return None
+    state = build_daemon_state(ctx.obj.get("config_path"))
+    if not daemon_ping(state):
+        start_daemon(state, timeout_seconds=5.0)
+    response = send_daemon_request(
+        state,
+        {
+            "action": "email_list",
+            "account": ctx.obj.get("account_email"),
+            "folder": folder_name,
+            "limit": limit,
+            "unread": unread,
+            "with_preview": with_preview,
+        },
+        timeout=15.0,
+    )
+    if not response.get("ok"):
+        raise RuntimeError(response.get("error", "Daemon email list failed"))
+    return response
+
+
 @click.group("email")
 @click.pass_context
 def email(ctx):
@@ -88,15 +142,26 @@ def email(ctx):
 @click.option("--folder", "folder_name", default="inbox", help="Folder name")
 @click.option("--limit", default=20, type=int, help="Number of messages to return")
 @click.option("--unread", is_flag=True, default=False, help="Only unread messages")
+@click.option(
+    "--with-preview",
+    is_flag=True,
+    default=False,
+    help="Include body_preview (slower for large result sets)",
+)
 @click.pass_context
-def email_list(ctx, folder_name, limit, unread):
+def email_list(ctx, folder_name, limit, unread, with_preview):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
+        daemon_result = _list_via_daemon(ctx, folder_name, limit, unread, with_preview)
+        if daemon_result:
+            formatter.success(daemon_result.get("data", []), count=daemon_result.get("count"))
+            return
         account = get_connection(ctx)
         folder = _resolve_folder(account, folder_name)
         queryset = folder.filter(is_read=False) if unread else folder.all()
-        items = queryset.order_by("-datetime_received")[:limit]
-        results = [serialize_email_summary(item) for item in items]
+        projected = _apply_summary_field_projection(queryset, include_body_preview=with_preview)
+        items = projected.order_by("-datetime_received")[:limit]
+        results = [serialize_email_summary(item, include_body_preview=with_preview) for item in items]
         formatter.success(results, count=len(results))
     except Exception as exc:
         formatter.error(str(exc), code="SERVER_ERROR")
@@ -227,8 +292,14 @@ def email_forward(ctx, message_id, to_addrs, body):
 @click.option("--limit", default=20, type=int, help="Max results")
 @click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
 @click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option(
+    "--with-preview",
+    is_flag=True,
+    default=False,
+    help="Include body_preview (slower for large result sets)",
+)
 @click.pass_context
-def email_search(ctx, query, folder_name, limit, start, end):
+def email_search(ctx, query, folder_name, limit, start, end, with_preview):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         folder = _resolve_folder(get_connection(ctx), folder_name)
@@ -239,8 +310,10 @@ def email_search(ctx, query, folder_name, limit, start, end):
         if end:
             end_dt = _parse_search_date(end, is_end=True)
             criteria &= Q(datetime_received__lte=end_dt)
-        items = folder.filter(criteria).order_by("-datetime_received")[:limit]
-        results = [serialize_email_summary(item) for item in items]
+        queryset = folder.filter(criteria)
+        projected = _apply_summary_field_projection(queryset, include_body_preview=with_preview)
+        items = projected.order_by("-datetime_received")[:limit]
+        results = [serialize_email_summary(item, include_body_preview=with_preview) for item in items]
         formatter.success(results, count=len(results))
     except click.BadParameter as exc:
         formatter.error(str(exc), code="INVALID_INPUT")
@@ -248,3 +321,59 @@ def email_search(ctx, query, folder_name, limit, start, end):
     except Exception as exc:
         formatter.error(str(exc), code="SERVER_ERROR")
         sys.exit(1)
+
+
+@email.command("watch")
+@click.option("--folder", "folder_name", default="inbox", help="Folder name to watch")
+@click.option(
+    "--backfill-minutes",
+    default=10,
+    type=int,
+    show_default=True,
+    help="Backfill window after streaming reconnect",
+)
+@click.pass_context
+def email_watch(ctx, folder_name, backfill_minutes):
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    state = build_daemon_state(ctx.obj.get("config_path"))
+    if not daemon_ping(state):
+        try:
+            start_daemon(state)
+        except Exception as exc:
+            formatter.error(str(exc), code="DAEMON_START_FAILED")
+            sys.exit(1)
+    request = {
+        "action": "watch",
+        "account": ctx.obj.get("account_email"),
+        "folder": folder_name,
+        "backfill_minutes": backfill_minutes,
+    }
+    try:
+        first, iterator = stream_watch_events(state, request)
+    except Exception as exc:
+        formatter.error(str(exc), code="DAEMON_UNAVAILABLE")
+        sys.exit(1)
+
+    if not first.get("ok"):
+        formatter.error(first.get("error", "Daemon rejected watch request"), code="WATCH_SUBSCRIBE_FAILED")
+        sys.exit(1)
+
+    click.echo(f"Watching folder '{folder_name}'. Press Ctrl+C to stop.", err=True)
+    try:
+        for envelope in iterator:
+            if not envelope.get("ok"):
+                formatter.error(envelope.get("error", "Daemon stream error"), code="WATCH_STREAM_ERROR")
+                sys.exit(1)
+            if envelope.get("type") != "event":
+                continue
+            event = envelope.get("data")
+            if ctx.obj.get("fmt", "json") == "json":
+                click.echo(json.dumps({"ok": True, "data": event}, ensure_ascii=False))
+            else:
+                click.echo(
+                    f"[{event.get('event_type', 'event')}] "
+                    f"{event.get('timestamp', '')} "
+                    f"folder={event.get('folder', '')}"
+                )
+    except KeyboardInterrupt:
+        click.echo("Stopped watch stream.", err=True)

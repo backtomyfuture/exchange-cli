@@ -63,6 +63,11 @@ class TestSerializeEmailSummary:
         result = serialize_email_summary(msg)
         assert result["has_attachments"] is True
 
+    def test_without_preview(self):
+        msg = _mock_message(text_body="Should not appear")
+        result = serialize_email_summary(msg, include_body_preview=False)
+        assert result["body_preview"] == ""
+
 
 class TestSerializeEmailDetail:
     def test_includes_body(self):
