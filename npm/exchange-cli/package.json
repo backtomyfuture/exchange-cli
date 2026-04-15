@@ -1,0 +1,30 @@
+{
+  "name": "@canghe_ai/exchange-cli",
+  "version": "0.1.0",
+  "description": "Exchange Web Services CLI - email, calendar, tasks, contacts. Designed for AI agents.",
+  "bin": {
+    "exchange-cli": "bin/exchange-cli.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "optionalDependencies": {
+    "@canghe_ai/exchange-cli-darwin-arm64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "keywords": ["exchange", "ews", "cli", "email", "ai-agent", "office365"],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/canghe/exchange-cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
