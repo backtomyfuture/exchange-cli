@@ -6,6 +6,7 @@ from .commands.calendar import calendar
 from .commands.draft import draft
 from .commands.email import email
 from .commands.folder import folder
+from .commands.task import task
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -51,6 +52,7 @@ cli.add_command(config)
 cli.add_command(draft)
 cli.add_command(email)
 cli.add_command(folder)
+cli.add_command(task)
 
 
 def main():
