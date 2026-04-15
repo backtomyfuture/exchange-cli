@@ -1,6 +1,6 @@
 {
   "name": "@backtomyfuture/exchange-cli",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Exchange Web Services CLI - email, calendar, tasks, contacts. Designed for AI agents.",
   "bin": {
     "exchange-cli": "bin/exchange-cli.js"
@@ -13,7 +13,7 @@
     "install.js"
   ],
   "optionalDependencies": {
-    "@backtomyfuture/exchange-cli-darwin-arm64": "0.1.8"
+    "@backtomyfuture/exchange-cli-darwin-arm64": "0.1.9"
   },
   "engines": {
     "node": ">=14"

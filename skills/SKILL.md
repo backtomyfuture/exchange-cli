@@ -1,6 +1,6 @@
 ---
 name: exchange-cli
-version: 1.2.0
+version: 1.3.0
 description: |
   Exchange/Outlook 邮件与办公 CLI 工具：收发邮件、搜索邮件、管理草稿、查看和创建日历事件、管理任务待办、查询联系人、实时监听新邮件。
   通过 exchange-cli 直连 Exchange/Office 365 服务器，输出结构化 JSON，专为 AI agent 设计。

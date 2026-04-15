@@ -1,6 +1,6 @@
 {
   "name": "@backtomyfuture/exchange-cli-darwin-arm64",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "exchange-cli binary for macOS arm64",
   "homepage": "https://github.com/backtomyfuture/exchange-cli#readme",
   "repository": {
