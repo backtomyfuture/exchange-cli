@@ -1,6 +1,7 @@
 import click
 
 from . import __version__
+from .commands.config import config
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -39,6 +40,9 @@ def cli(ctx, fmt, config_path, account_email, verbose):
     ctx.obj["config_path"] = config_path
     ctx.obj["account_email"] = account_email
     ctx.obj["verbose"] = verbose
+
+
+cli.add_command(config)
 
 
 def main():
