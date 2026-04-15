@@ -2,9 +2,11 @@ import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
+from exchange_cli.commands.email import _parse_search_date
 from exchange_cli.main import cli
 
 
@@ -94,3 +96,34 @@ class TestEmailSearch:
         mock_conn.inbox.filter.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[])
         result = runner.invoke(cli, ["email", "search", "quarterly report"])
         assert result.exit_code == 0
+
+    def test_search_invalid_start_date_returns_invalid_input(self, runner, mock_conn):
+        result = runner.invoke(cli, ["email", "search", "quarterly report", "--start", "2024/07/01"])
+        assert result.exit_code != 0
+        data = json.loads(result.output)
+        assert data["ok"] is False
+        assert data["code"] == "INVALID_INPUT"
+
+
+class TestEmailSearchDateParsing:
+    def test_start_date_without_time_uses_day_start(self):
+        parsed = _parse_search_date("2024-07-15", is_end=False)
+        assert parsed.year == 2024
+        assert parsed.month == 7
+        assert parsed.day == 15
+        assert parsed.hour == 0
+        assert parsed.minute == 0
+        assert parsed.second == 0
+
+    def test_end_date_without_time_uses_day_end(self):
+        parsed = _parse_search_date("2024-07-15", is_end=True)
+        assert parsed.year == 2024
+        assert parsed.month == 7
+        assert parsed.day == 15
+        assert parsed.hour == 23
+        assert parsed.minute == 59
+        assert parsed.second == 59
+
+    def test_invalid_date_raises_bad_parameter(self):
+        with pytest.raises(click.BadParameter):
+            _parse_search_date("15-07-2024", is_end=False)

@@ -4,7 +4,7 @@
 const fs = require('fs');
 
 const PLATFORM_PACKAGES = {
-  'darwin-arm64': '@canghe_ai/exchange-cli-darwin-arm64',
+  'darwin-arm64': '@backtomyfuture/exchange-cli-darwin-arm64',
 };
 
 const platformKey = `${process.platform}-${process.arch}`;
@@ -25,5 +25,5 @@ try {
   }
 } catch {
   console.log(`exchange-cli: platform package ${pkg} not installed`);
-  console.log('To fix: npm install --force @canghe_ai/exchange-cli');
+  console.log('To fix: npm install --force @backtomyfuture/exchange-cli');
 }

@@ -28,7 +28,7 @@ pip install exchange-cli
 ### npm
 
 ```bash
-npm install -g @canghe_ai/exchange-cli
+npm install -g @backtomyfuture/exchange-cli
 ```
 
 ## 常用命令
@@ -74,6 +74,19 @@ exchange-cli contact search "John"
 - `EXCHANGE_USERNAME`
 - `EXCHANGE_PASSWORD`
 - `EXCHANGE_AUTH_TYPE`
+- `EXCHANGE_NO_VERIFY_SSL`
+- `EXCHANGE_DOMAIN`
+- `EXCHANGE_EMAIL_SUFFIX`
+- `EXCHANGE_EMAIL`
+
+## Release Checklist
+
+- 确认 Python 与 npm 版本一致（`exchange_cli/__init__.py`、`pyproject.toml`、两个 npm `package.json`）
+- 重新编译平台二进制到 `npm/platforms/darwin-arm64/bin/exchange-cli`
+- 本地验证：`exchange-cli --version`、`pytest -q`、`ruff check .`
+- 打包预览：在两个 npm 包目录执行 `npm pack --dry-run`
+- 先发布平台包，再发布主包（都用同一版本号）
+- 发布后验证：`npm view @backtomyfuture/exchange-cli version` 与 `npm i -g @backtomyfuture/exchange-cli@<version>`
 
 ## License
 

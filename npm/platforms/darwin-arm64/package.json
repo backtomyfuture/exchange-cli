@@ -1,7 +1,15 @@
 {
-  "name": "@canghe_ai/exchange-cli-darwin-arm64",
-  "version": "0.1.0",
+  "name": "@backtomyfuture/exchange-cli-darwin-arm64",
+  "version": "0.1.3",
   "description": "exchange-cli binary for macOS arm64",
+  "homepage": "https://github.com/backtomyfuture/exchange-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/backtomyfuture/exchange-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/backtomyfuture/exchange-cli/issues"
+  },
   "os": ["darwin"],
   "cpu": ["arm64"],
   "files": ["bin/"],

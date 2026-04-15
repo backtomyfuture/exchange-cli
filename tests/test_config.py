@@ -27,6 +27,7 @@ class TestConfigManager:
             username="DOMAIN\\test",
             password="secret123",
             auth_type="ntlm",
+            no_verify_ssl=True,
         )
         loaded = cm.load_config()
         assert loaded["default_account"] == "test@example.com"
@@ -34,6 +35,7 @@ class TestConfigManager:
         assert acc["server"] == "mail.example.com"
         assert acc["username"] == "DOMAIN\\test"
         assert acc["auth_type"] == "ntlm"
+        assert acc["no_verify_ssl"] is True
         assert acc["password"] != "secret123"
         assert acc["password"].startswith("gAAAAA")
 
@@ -62,6 +64,7 @@ class TestConfigManager:
         assert creds["username"] == "envuser"
         assert creds["password"] == "envpass"
         assert creds["auth_type"] == "basic"
+        assert creds["no_verify_ssl"] is False
 
     def test_env_vars_override_config_file(self, cm, monkeypatch):
         cm.save_account(
@@ -78,6 +81,28 @@ class TestConfigManager:
         assert creds["server"] == "env.example.com"
         assert creds["username"] == "envuser"
         assert creds["password"] == "envpass"
+
+    def test_env_domain_derives_username(self, cm, monkeypatch):
+        monkeypatch.setenv("EXCHANGE_SERVER", "env.example.com")
+        monkeypatch.setenv("EXCHANGE_PASSWORD", "envpass")
+        monkeypatch.setenv("EXCHANGE_DOMAIN", "hnanet")
+        creds = cm.get_account_credentials("q-fu@tianjin-air.com")
+        assert creds["username"] == "hnanet\\q-fu"
+        assert creds["email"] == "q-fu@tianjin-air.com"
+
+    def test_env_email_suffix_derives_email(self, cm, monkeypatch):
+        monkeypatch.setenv("EXCHANGE_SERVER", "env.example.com")
+        monkeypatch.setenv("EXCHANGE_PASSWORD", "envpass")
+        monkeypatch.setenv("EXCHANGE_USERNAME", "hnanet\\q-fu")
+        monkeypatch.setenv("EXCHANGE_EMAIL_SUFFIX", "@tianjin-air.com")
+        creds = cm.get_account_credentials(None)
+        assert creds["email"] == "q-fu@tianjin-air.com"
+
+    def test_env_no_verify_ssl_overrides_config(self, cm, monkeypatch):
+        cm.save_account("test@example.com", "mail.example.com", "user", "pass", "ntlm", no_verify_ssl=False)
+        monkeypatch.setenv("EXCHANGE_NO_VERIFY_SSL", "1")
+        creds = cm.get_account_credentials("test@example.com")
+        assert creds["no_verify_ssl"] is True
 
     def test_multiple_accounts(self, cm):
         cm.save_account("a@x.com", "s1.com", "u1", "p1", "ntlm")
