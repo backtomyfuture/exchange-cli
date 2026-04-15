@@ -1,19 +1,37 @@
+import importlib
+
 import click
 
 from . import __version__
-from .commands.calendar import calendar
-from .commands.config import config
-from .commands.contact import contact
-from .commands.daemon import daemon
-from .commands.draft import draft
-from .commands.email import email
-from .commands.folder import folder
-from .commands.task import task
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
+_COMMAND_MODULES = {
+    "calendar": "exchange_cli.commands.calendar",
+    "config": "exchange_cli.commands.config",
+    "contact": "exchange_cli.commands.contact",
+    "daemon": "exchange_cli.commands.daemon",
+    "draft": "exchange_cli.commands.draft",
+    "email": "exchange_cli.commands.email",
+    "folder": "exchange_cli.commands.folder",
+    "task": "exchange_cli.commands.task",
+}
 
-@click.group(context_settings=_CONTEXT_SETTINGS)
+
+class LazyGroup(click.Group):
+    """Click Group that defers command module imports until the command is invoked."""
+
+    def get_command(self, ctx, cmd_name):
+        if cmd_name in _COMMAND_MODULES:
+            mod = importlib.import_module(_COMMAND_MODULES[cmd_name])
+            return getattr(mod, cmd_name)
+        return super().get_command(ctx, cmd_name)
+
+    def list_commands(self, ctx):
+        return sorted(_COMMAND_MODULES.keys())
+
+
+@click.group(cls=LazyGroup, context_settings=_CONTEXT_SETTINGS)
 @click.version_option(version=__version__, prog_name="exchange-cli")
 @click.option(
     "--format",
@@ -47,16 +65,6 @@ def cli(ctx, fmt, config_path, account_email, verbose):
     ctx.obj["config_path"] = config_path
     ctx.obj["account_email"] = account_email
     ctx.obj["verbose"] = verbose
-
-
-cli.add_command(calendar)
-cli.add_command(contact)
-cli.add_command(config)
-cli.add_command(draft)
-cli.add_command(daemon)
-cli.add_command(email)
-cli.add_command(folder)
-cli.add_command(task)
 
 
 def main():
