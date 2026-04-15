@@ -115,3 +115,38 @@ class TestConfigManager:
         cm.save_account("a@x.com", "s.com", "u", "secret", "ntlm")
         display = cm.get_display_config()
         assert display["accounts"]["a@x.com"]["password"] == "********"
+
+    def test_save_account_trims_whitespace_inputs(self, cm):
+        cm.save_account(
+            email="  test@example.com\t",
+            server="\t10.72.8.110 ",
+            username=" hnanet\\q-fu ",
+            password="secret",
+            auth_type=" ntlm ",
+        )
+        creds = cm.get_account_credentials("test@example.com")
+        assert creds["email"] == "test@example.com"
+        assert creds["server"] == "10.72.8.110"
+        assert creds["username"] == "hnanet\\q-fu"
+        assert creds["auth_type"] == "ntlm"
+
+    def test_get_account_credentials_trims_legacy_stored_whitespace(self, cm):
+        cm._save_config(
+            {
+                "version": 1,
+                "default_account": "test@example.com",
+                "accounts": {
+                    "test@example.com": {
+                        "server": "\t10.72.8.110 ",
+                        "username": " hnanet\\q-fu ",
+                        "password": cm._encrypt("secret"),
+                        "auth_type": " ntlm ",
+                        "no_verify_ssl": False,
+                    }
+                },
+            }
+        )
+        creds = cm.get_account_credentials("test@example.com")
+        assert creds["server"] == "10.72.8.110"
+        assert creds["username"] == "hnanet\\q-fu"
+        assert creds["auth_type"] == "ntlm"
