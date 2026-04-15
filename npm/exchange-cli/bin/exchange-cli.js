@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PLATFORM_PACKAGES = {
-  'darwin-arm64': '@canghe_ai/exchange-cli-darwin-arm64',
+  'darwin-arm64': '@backtomyfuture/exchange-cli-darwin-arm64',
 };
 
 const platformKey = `${process.platform}-${process.arch}`;
@@ -35,7 +35,7 @@ function getBinaryPath() {
   }
 
   console.error(`exchange-cli: binary not found for ${platformKey}`);
-  console.error('Try: npm install --force @canghe_ai/exchange-cli');
+  console.error('Try: npm install --force @backtomyfuture/exchange-cli');
   process.exit(1);
 }
 

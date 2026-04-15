@@ -19,7 +19,7 @@ class TestConfigInit:
             result = runner.invoke(
                 cli,
                 ["--config", config_path, "config", "init"],
-                input="mail.example.com\nDOMAIN\\test\nsecret123\nntlm\ntest@example.com\n",
+                input="mail.example.com\nDOMAIN\\test\nsecret123\nntlm\ntest@example.com\nn\n",
             )
         assert result.exit_code == 0
         assert "saved" in result.output.lower() or "ok" in result.output.lower()
@@ -51,3 +51,14 @@ class TestConfigTest:
         cm.save_account("test@example.com", "mail.example.com", "user", "pass", "ntlm")
         result = runner.invoke(cli, ["--config", str(tmp_path / ".exchange-cli"), "config", "test"])
         assert result.exit_code == 0
+        mock_test.assert_called_once_with("mail.example.com", "user", "pass", "ntlm", "test@example.com", False)
+
+    @patch("exchange_cli.commands.config._test_connection", return_value=True)
+    def test_connection_passes_auth_type(self, mock_test, runner, tmp_path):
+        from exchange_cli.core.config import ConfigManager
+
+        cm = ConfigManager(config_dir=tmp_path / ".exchange-cli")
+        cm.save_account("test@example.com", "mail.example.com", "user", "pass", "basic")
+        result = runner.invoke(cli, ["--config", str(tmp_path / ".exchange-cli"), "config", "test"])
+        assert result.exit_code == 0
+        mock_test.assert_called_once_with("mail.example.com", "user", "pass", "basic", "test@example.com", False)

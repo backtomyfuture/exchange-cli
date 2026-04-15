@@ -8,3 +8,6 @@ build/
 .ruff_cache/
 *.egg
 .DS_Store
+.real-account/
+.pyinstaller/
+*.spec

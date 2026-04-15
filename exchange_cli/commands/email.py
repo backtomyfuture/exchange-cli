@@ -60,6 +60,24 @@ def _build_message(account, **kwargs):
     return _StubMessage(**kwargs)
 
 
+def _parse_search_date(value: str, *, is_end: bool) -> EWSDateTime:
+    timezone = EWSTimeZone.localzone()
+    for fmt, has_time in (
+        ("%Y-%m-%d %H:%M:%S", True),
+        ("%Y-%m-%d %H:%M", True),
+        ("%Y-%m-%d", False),
+    ):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            if is_end and not has_time:
+                parsed = parsed.replace(hour=23, minute=59, second=59)
+            return EWSDateTime.from_datetime(parsed).replace(tzinfo=timezone)
+        except ValueError:
+            continue
+
+    raise click.BadParameter(f"Invalid date: {value}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM[:SS].")
+
+
 @click.group("email")
 @click.pass_context
 def email(ctx):
@@ -215,16 +233,18 @@ def email_search(ctx, query, folder_name, limit, start, end):
     try:
         folder = _resolve_folder(get_connection(ctx), folder_name)
         criteria = Q(subject__icontains=query) | Q(body__icontains=query)
-        timezone = EWSTimeZone.localzone()
         if start:
-            start_dt = timezone.localize(EWSDateTime.from_datetime(datetime.strptime(start, "%Y-%m-%d")))
+            start_dt = _parse_search_date(start, is_end=False)
             criteria &= Q(datetime_received__gte=start_dt)
         if end:
-            end_dt = timezone.localize(EWSDateTime.from_datetime(datetime.strptime(end, "%Y-%m-%d")))
+            end_dt = _parse_search_date(end, is_end=True)
             criteria &= Q(datetime_received__lte=end_dt)
         items = folder.filter(criteria).order_by("-datetime_received")[:limit]
         results = [serialize_email_summary(item) for item in items]
         formatter.success(results, count=len(results))
+    except click.BadParameter as exc:
+        formatter.error(str(exc), code="INVALID_INPUT")
+        sys.exit(1)
     except Exception as exc:
         formatter.error(str(exc), code="SERVER_ERROR")
         sys.exit(1)

@@ -9,6 +9,8 @@ from cryptography.fernet import Fernet
 DEFAULT_CONFIG_DIR = Path.home() / ".exchange-cli"
 CONFIG_FILENAME = "config.json"
 KEY_FILENAME = ".key"
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
+FALSY_VALUES = {"0", "false", "no", "off"}
 
 
 class ConfigManager:
@@ -38,6 +40,38 @@ class ConfigManager:
     def _decrypt(self, token: str) -> str:
         return Fernet(self._get_or_create_key()).decrypt(token.encode()).decode()
 
+    def _parse_bool(self, value: str | bool | None) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized in TRUTHY_VALUES:
+            return True
+        if normalized in FALSY_VALUES:
+            return False
+        return None
+
+    def _derive_username_from_email(self, email: str | None, domain: str | None) -> str | None:
+        if not email or not domain:
+            return None
+        local_part = email.split("@", 1)[0].strip()
+        domain = domain.strip()
+        if not local_part or not domain:
+            return None
+        return f"{domain}\\{local_part}"
+
+    def _derive_email_from_username(self, username: str | None, email_suffix: str | None) -> str | None:
+        if not username or not email_suffix:
+            return None
+        suffix = email_suffix if email_suffix.startswith("@") else f"@{email_suffix}"
+        local_part = username.split("\\")[-1].strip()
+        if "@" in local_part:
+            local_part = local_part.split("@", 1)[0]
+        if not local_part:
+            return None
+        return f"{local_part}{suffix}"
+
     def load_config(self) -> dict | None:
         if not self.config_path.exists():
             return None
@@ -57,6 +91,7 @@ class ConfigManager:
         username: str,
         password: str,
         auth_type: str = "ntlm",
+        no_verify_ssl: bool = False,
     ) -> None:
         config = self.load_config() or {"version": 1, "default_account": email, "accounts": {}}
         config["accounts"][email] = {
@@ -64,6 +99,7 @@ class ConfigManager:
             "username": username,
             "password": self._encrypt(password),
             "auth_type": auth_type,
+            "no_verify_ssl": bool(no_verify_ssl),
         }
         if not config.get("default_account"):
             config["default_account"] = email
@@ -74,13 +110,27 @@ class ConfigManager:
         env_username = os.environ.get("EXCHANGE_USERNAME")
         env_password = os.environ.get("EXCHANGE_PASSWORD")
         env_auth = os.environ.get("EXCHANGE_AUTH_TYPE")
+        env_domain = os.environ.get("EXCHANGE_DOMAIN")
+        env_email_suffix = os.environ.get("EXCHANGE_EMAIL_SUFFIX")
+        env_email = os.environ.get("EXCHANGE_EMAIL")
+        env_no_verify_ssl = self._parse_bool(os.environ.get("EXCHANGE_NO_VERIFY_SSL"))
 
-        if env_server and env_username and env_password:
+        requested_email = email or env_email
+
+        if env_server and env_password and (env_username or env_domain):
+            resolved_email = requested_email
+            resolved_username = env_username or self._derive_username_from_email(resolved_email, env_domain)
+            if not resolved_email:
+                resolved_email = self._derive_email_from_username(resolved_username, env_email_suffix)
+            if not resolved_username:
+                return None
             return {
+                "email": resolved_email,
                 "server": env_server,
-                "username": env_username,
+                "username": resolved_username,
                 "password": env_password,
                 "auth_type": env_auth or "ntlm",
+                "no_verify_ssl": env_no_verify_ssl if env_no_verify_ssl is not None else False,
             }
 
         config = self.load_config()
@@ -93,11 +143,23 @@ class ConfigManager:
             return None
 
         account = accounts[target]
+        resolved_email = target
+        resolved_username = env_username or account.get("username")
+        if not resolved_username:
+            resolved_username = self._derive_username_from_email(resolved_email, env_domain)
+        if not resolved_email:
+            resolved_email = env_email or self._derive_email_from_username(resolved_username, env_email_suffix)
+
+        stored_no_verify = self._parse_bool(account.get("no_verify_ssl"))
+        no_verify_ssl = env_no_verify_ssl if env_no_verify_ssl is not None else (stored_no_verify or False)
+
         return {
+            "email": resolved_email,
             "server": env_server or account["server"],
-            "username": env_username or account["username"],
+            "username": resolved_username,
             "password": env_password or self._decrypt(account["password"]),
             "auth_type": env_auth or account.get("auth_type", "ntlm"),
+            "no_verify_ssl": no_verify_ssl,
         }
 
     def get_display_config(self) -> dict | None:

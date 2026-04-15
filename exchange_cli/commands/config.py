@@ -1,24 +1,50 @@
 """exchange-cli config {init, show, test}."""
 
+import os
 import sys
 
 import click
 from exchangelib import DELEGATE, Account, Configuration, Credentials
 
 from ..core.config import ConfigManager
+from ..core.connection import _configure_http_adapter_from_env, _resolve_auth_type
 from ..core.output import OutputFormatter
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
-def _test_connection(server, username, password) -> bool:
+
+def _derive_email_from_username(username: str | None, suffix: str | None) -> str | None:
+    if not username or not suffix:
+        return None
+    normalized_suffix = suffix if suffix.startswith("@") else f"@{suffix}"
+    local_part = username.split("\\")[-1]
+    if "@" in local_part:
+        local_part = local_part.split("@", 1)[0]
+    local_part = local_part.strip()
+    if not local_part:
+        return None
+    return f"{local_part}{normalized_suffix}"
+
+
+def _test_connection(
+    server,
+    username,
+    password,
+    auth_type="ntlm",
+    primary_smtp_address=None,
+    no_verify_ssl=False,
+) -> bool:
     try:
+        _configure_http_adapter_from_env(no_verify_ssl=no_verify_ssl)
         credentials = Credentials(username, password)
-        config = Configuration(server=server, credentials=credentials)
-        Account(
-            primary_smtp_address=username,
+        config = Configuration(server=server, credentials=credentials, auth_type=_resolve_auth_type(auth_type))
+        account = Account(
+            primary_smtp_address=primary_smtp_address or username,
             config=config,
             autodiscover=False,
             access_type=DELEGATE,
         )
+        account.root.refresh()
         return True
     except Exception:
         return False
@@ -43,19 +69,53 @@ def config_init(ctx):
         if not click.confirm("Add a new account or overwrite?", default=True):
             sys.exit(0)
 
-    server = click.prompt("Exchange Server", type=str)
-    username = click.prompt("Username (e.g. DOMAIN\\user or user@domain.com)", type=str)
+    server_default = os.environ.get("EXCHANGE_SERVER")
+    if server_default:
+        server = click.prompt("Exchange Server", type=str, default=server_default, show_default=True)
+    else:
+        server = click.prompt("Exchange Server", type=str)
+
+    username_default = os.environ.get("EXCHANGE_USERNAME")
+    if not username_default:
+        env_domain = os.environ.get("EXCHANGE_DOMAIN")
+        current_user = os.environ.get("USER")
+        if env_domain and current_user:
+            username_default = f"{env_domain}\\{current_user}"
+
+    if username_default:
+        username = click.prompt(
+            "Username (e.g. DOMAIN\\user or user@domain.com)",
+            type=str,
+            default=username_default,
+            show_default=True,
+        )
+    else:
+        username = click.prompt("Username (e.g. DOMAIN\\user or user@domain.com)", type=str)
+
     password = click.prompt("Password", type=str, hide_input=True)
-    auth_type = click.prompt("Auth type", type=click.Choice(["ntlm", "basic"]), default="ntlm")
-    email = click.prompt("Email address", type=str)
+    auth_default = os.environ.get("EXCHANGE_AUTH_TYPE", "ntlm").lower()
+    if auth_default not in {"ntlm", "basic"}:
+        auth_default = "ntlm"
+    auth_type = click.prompt("Auth type", type=click.Choice(["ntlm", "basic"]), default=auth_default)
+
+    email_default = os.environ.get("EXCHANGE_EMAIL")
+    if not email_default:
+        email_default = _derive_email_from_username(username, os.environ.get("EXCHANGE_EMAIL_SUFFIX"))
+    if email_default:
+        email = click.prompt("Email address", type=str, default=email_default, show_default=True)
+    else:
+        email = click.prompt("Email address", type=str)
+
+    no_verify_default = os.environ.get("EXCHANGE_NO_VERIFY_SSL", "").strip().lower() in TRUTHY_VALUES
+    no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default)
 
     click.echo("Testing connection...", err=True)
-    if _test_connection(server, username, password):
+    if _test_connection(server, username, password, auth_type, email, no_verify_ssl):
         click.echo("Connected successfully.", err=True)
     else:
         click.echo("Warning: Connection test failed. Saving config anyway.", err=True)
 
-    config_manager.save_account(email, server, username, password, auth_type)
+    config_manager.save_account(email, server, username, password, auth_type, no_verify_ssl=no_verify_ssl)
     click.echo(f"Configuration saved to {config_manager.config_path}", err=True)
 
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
@@ -92,7 +152,14 @@ def config_test(ctx):
         sys.exit(1)
 
     click.echo("Testing connection...", err=True)
-    if _test_connection(credentials["server"], credentials["username"], credentials["password"]):
+    if _test_connection(
+        credentials["server"],
+        credentials["username"],
+        credentials["password"],
+        credentials.get("auth_type", "ntlm"),
+        account_email or credentials.get("email"),
+        credentials.get("no_verify_ssl", False),
+    ):
         formatter.success({"message": "Connection successful", "server": credentials["server"]})
         return
 
