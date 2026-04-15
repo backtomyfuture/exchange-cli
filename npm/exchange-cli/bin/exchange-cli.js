@@ -3,6 +3,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { ensureDarwinArm64RuntimeLayout } = require('./runtime-layout');
 
 const PLATFORM_PACKAGES = {
   'darwin-arm64': '@backtomyfuture/exchange-cli-darwin-arm64',
@@ -40,7 +41,9 @@ function getBinaryPath() {
 }
 
 try {
-  execFileSync(getBinaryPath(), process.argv.slice(2), {
+  const binaryPath = getBinaryPath();
+  ensureDarwinArm64RuntimeLayout(binaryPath);
+  execFileSync(binaryPath, process.argv.slice(2), {
     stdio: 'inherit',
     env: { ...process.env },
   });

@@ -1,6 +1,6 @@
 {
   "name": "@backtomyfuture/exchange-cli-darwin-arm64",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "exchange-cli binary for macOS arm64",
   "homepage": "https://github.com/backtomyfuture/exchange-cli#readme",
   "repository": {
@@ -12,6 +12,9 @@
   },
   "os": ["darwin"],
   "cpu": ["arm64"],
+  "scripts": {
+    "prepare:bin": "python ../../../scripts/prepare_darwin_arm64_package.py"
+  },
   "files": ["bin/"],
   "license": "Apache-2.0",
   "publishConfig": {

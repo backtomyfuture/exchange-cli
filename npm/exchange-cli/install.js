@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const { ensureDarwinArm64RuntimeLayout } = require('./bin/runtime-layout');
 
 const PLATFORM_PACKAGES = {
   'darwin-arm64': '@backtomyfuture/exchange-cli-darwin-arm64',
@@ -19,6 +20,7 @@ const ext = process.platform === 'win32' ? '.exe' : '';
 
 try {
   const binaryPath = require.resolve(`${pkg}/bin/exchange-cli${ext}`);
+  ensureDarwinArm64RuntimeLayout(binaryPath, (message) => console.log(message));
   if (process.platform !== 'win32') {
     fs.chmodSync(binaryPath, 0o755);
     console.log(`exchange-cli: set executable permission for ${platformKey}`);
