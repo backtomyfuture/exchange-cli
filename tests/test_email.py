@@ -95,16 +95,34 @@ class TestEmailList:
 
 
 class TestEmailRead:
-    def test_read_message(self, runner, mock_conn):
+    def test_read_message_default_markdown(self, runner, mock_conn):
         message = _mock_message()
-        mock_conn.inbox.get.return_value = message
+        message.body = "<html><body><p>Hello <b>World</b></p></body></html>"
         with patch("exchange_cli.commands.email._find_message", return_value=message):
             result = runner.invoke(cli, ["email", "read", "AAMk123"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
-        assert data["data"]["subject"] == "Test"
-        assert "body" in data["data"]
+        assert data["data"]["body_format"] == "markdown"
+        assert "<html>" not in data["data"]["body"]
+
+    def test_read_message_html_format(self, runner, mock_conn):
+        message = _mock_message()
+        message.body = "<html><body><p>Hello</p></body></html>"
+        with patch("exchange_cli.commands.email._find_message", return_value=message):
+            result = runner.invoke(cli, ["email", "read", "AAMk123", "--body-format", "html"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["data"]["body_format"] == "html"
+        assert "<html>" in data["data"]["body"]
+
+    def test_read_not_found(self, runner, mock_conn):
+        with patch("exchange_cli.commands.email._find_message", return_value=None):
+            result = runner.invoke(cli, ["email", "read", "NONEXISTENT"])
+        assert result.exit_code != 0
+        data = json.loads(result.output)
+        assert data["ok"] is False
+        assert data["code"] == "NOT_FOUND"
 
 
 class TestEmailSend:

@@ -176,8 +176,15 @@ def email_list(ctx, folder_name, limit, unread, with_preview):
 @email.command("read")
 @click.argument("message_id")
 @click.option("--save-attachments", "save_dir", default=None, help="Directory to save attachments")
+@click.option(
+    "--body-format",
+    "body_format",
+    default="markdown",
+    type=click.Choice(["markdown", "html"]),
+    help="Body output format (default: markdown)",
+)
 @click.pass_context
-def email_read(ctx, message_id, save_dir):
+def email_read(ctx, message_id, save_dir, body_format):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -195,7 +202,7 @@ def email_read(ctx, message_id, save_dir):
                         handle.write(attachment.content)
                     click.echo(f"Saved: {path}", err=True)
 
-        formatter.success(serialize_email_detail(message))
+        formatter.success(serialize_email_detail(message, body_format=body_format))
     except Exception as exc:
         formatter.error(str(exc), code="SERVER_ERROR")
         sys.exit(1)
