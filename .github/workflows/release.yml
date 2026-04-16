@@ -6,7 +6,6 @@ on:
 
 jobs:
   publish-pypi:
-    if: ${{ secrets.PYPI_TOKEN != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +20,6 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
 
   publish-npm-darwin-arm64:
-    if: ${{ secrets.NPM_TOKEN != '' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +38,6 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-npm:
-    if: ${{ secrets.NPM_TOKEN != '' }}
     runs-on: ubuntu-latest
     needs: publish-npm-darwin-arm64
     steps:
