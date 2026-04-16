@@ -3,10 +3,14 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { ensureDarwinArm64RuntimeLayout } = require('./runtime-layout');
 
 const PLATFORM_PACKAGES = {
   'darwin-arm64': '@backtomyfuture/exchange-cli-darwin-arm64',
+  'darwin-x64': '@backtomyfuture/exchange-cli-darwin-x64',
+  'linux-x64': '@backtomyfuture/exchange-cli-linux-x64',
+  'linux-arm64': '@backtomyfuture/exchange-cli-linux-arm64',
+  'win32-x64': '@backtomyfuture/exchange-cli-win32-x64',
+  'win32-ia32': '@backtomyfuture/exchange-cli-win32-ia32',
 };
 
 const platformKey = `${process.platform}-${process.arch}`;
@@ -42,7 +46,10 @@ function getBinaryPath() {
 
 try {
   const binaryPath = getBinaryPath();
-  ensureDarwinArm64RuntimeLayout(binaryPath);
+  if (process.platform === 'darwin') {
+    const { ensureDarwinArm64RuntimeLayout } = require('./runtime-layout');
+    ensureDarwinArm64RuntimeLayout(binaryPath);
+  }
   execFileSync(binaryPath, process.argv.slice(2), {
     stdio: 'inherit',
     env: { ...process.env },

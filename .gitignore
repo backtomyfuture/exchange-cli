@@ -11,3 +11,4 @@ build/
 .real-account/
 .pyinstaller/
 *.spec
+npm/platforms/*/bin/

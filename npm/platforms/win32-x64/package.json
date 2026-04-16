@@ -1,0 +1,20 @@
+{
+  "name": "@backtomyfuture/exchange-cli-win32-x64",
+  "version": "0.1.9",
+  "description": "exchange-cli binary for Windows x64",
+  "homepage": "https://github.com/backtomyfuture/exchange-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/backtomyfuture/exchange-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/backtomyfuture/exchange-cli/issues"
+  },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/"],
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -13,7 +13,12 @@
     "install.js"
   ],
   "optionalDependencies": {
-    "@backtomyfuture/exchange-cli-darwin-arm64": "0.1.9"
+    "@backtomyfuture/exchange-cli-darwin-arm64": "0.1.9",
+    "@backtomyfuture/exchange-cli-darwin-x64": "0.1.9",
+    "@backtomyfuture/exchange-cli-linux-x64": "0.1.9",
+    "@backtomyfuture/exchange-cli-linux-arm64": "0.1.9",
+    "@backtomyfuture/exchange-cli-win32-x64": "0.1.9",
+    "@backtomyfuture/exchange-cli-win32-ia32": "0.1.9"
   },
   "engines": {
     "node": ">=14"
