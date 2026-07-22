@@ -154,7 +154,7 @@ def check_versions(repo_root: Path, tag: str | None = None) -> tuple[str, list[s
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tag", help="Optional release tag to verify (for example, v0.1.9)")
+    parser.add_argument("--tag", help="Optional release tag to verify (for example, v0.1.10)")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
