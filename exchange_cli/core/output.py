@@ -26,12 +26,24 @@ class OutputFormatter:
             return
         self._print_text(data, handle)
 
-    def error(self, message: str, code: str | None = None, file=None):
+    def error(
+        self,
+        message: str,
+        code: str | None = None,
+        *,
+        retryable: bool | None = None,
+        details: dict | None = None,
+        file=None,
+    ):
         handle = file or sys.stdout
         if self.fmt == "json":
             payload = {"ok": False, "error": message}
             if code:
                 payload["code"] = code
+            if retryable is not None:
+                payload["retryable"] = retryable
+            if details:
+                payload["details"] = details
             json.dump(payload, handle, ensure_ascii=False)
             handle.write("\n")
             return

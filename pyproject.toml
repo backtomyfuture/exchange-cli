@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "exchange-cli"
-version = "0.1.9"
-description = "CLI for Microsoft Exchange Web Services - designed for AI agents"
+dynamic = ["version"]
+description = "CLI for on-premises Microsoft Exchange Server - designed for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-keywords = ["exchange", "ews", "cli", "email", "ai-agent", "office365"]
+keywords = ["exchange", "exchange-server", "ews", "cli", "email", "ai-agent"]
 authors = [{ name = "Jarod" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -45,6 +45,12 @@ select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live_exchange: read-only smoke tests against an explicitly enabled local Exchange Server",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.setuptools.dynamic]
+version = {attr = "exchange_cli.__version__"}

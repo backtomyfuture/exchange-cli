@@ -1,13 +1,12 @@
 """exchange-cli config {init, show, test}."""
 
 import os
-import sys
 
 import click
-from exchangelib import DELEGATE, Account, Configuration, Credentials
 
-from ..core.config import ConfigManager
-from ..core.connection import _configure_http_adapter_from_env, _resolve_auth_type
+from ..core.config import DEFAULT_TIMEOUT_SECONDS, ConfigManager
+from ..core.connection import create_account
+from ..core.errors import CliError, classify_exception
 from ..core.output import OutputFormatter
 
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
@@ -42,32 +41,27 @@ def _test_connection(
     auth_type="ntlm",
     primary_smtp_address=None,
     no_verify_ssl=False,
+    timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
 ) -> bool:
-    try:
-        normalized_server = _normalize_text(server)
-        normalized_username = _normalize_text(username)
-        normalized_auth_type = _normalize_text(auth_type, lower=True) or "ntlm"
-        normalized_primary_smtp_address = _normalize_text(primary_smtp_address) or normalized_username
-        if not normalized_server or not normalized_username:
-            return False
-
-        _configure_http_adapter_from_env(no_verify_ssl=no_verify_ssl)
-        credentials = Credentials(normalized_username, password)
-        config = Configuration(
-            server=normalized_server,
-            credentials=credentials,
-            auth_type=_resolve_auth_type(normalized_auth_type),
-        )
-        account = Account(
-            primary_smtp_address=normalized_primary_smtp_address,
-            config=config,
-            autodiscover=False,
-            access_type=DELEGATE,
-        )
-        account.root.refresh()
-        return True
-    except Exception:
+    normalized_server = _normalize_text(server)
+    normalized_username = _normalize_text(username)
+    normalized_auth_type = _normalize_text(auth_type, lower=True) or "ntlm"
+    normalized_primary_smtp_address = _normalize_text(primary_smtp_address)
+    if not normalized_server or not normalized_username or not normalized_primary_smtp_address:
         return False
+    account = create_account(
+        {
+            "email": normalized_primary_smtp_address,
+            "server": normalized_server,
+            "username": normalized_username,
+            "password": password,
+            "auth_type": normalized_auth_type,
+            "no_verify_ssl": bool(no_verify_ssl),
+            "timeout_seconds": timeout_seconds,
+        }
+    )
+    account.root.refresh()
+    return True
 
 
 @click.group("config")
@@ -82,12 +76,13 @@ def config_init(ctx):
     """Interactive setup for Exchange server credentials."""
     config_path = ctx.obj.get("config_path")
     config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
 
-    existing = config_manager.load_config()
-    if existing:
+    if config_manager.config_path.exists() or config_manager.config_path.is_symlink():
         click.echo("Existing configuration found.", err=True)
-        if not click.confirm("Add a new account or overwrite?", default=True):
-            sys.exit(0)
+        if not click.confirm("Overwrite the existing single-account configuration?", default=False):
+            formatter.success({"message": "Configuration unchanged", "changed": False})
+            return
 
     server_default = os.environ.get("EXCHANGE_SERVER")
     if server_default:
@@ -135,16 +130,38 @@ def config_init(ctx):
     no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default)
 
     click.echo("Testing connection...", err=True)
-    if _test_connection(server, username, password, auth_type, email, no_verify_ssl):
+    try:
+        timeout_seconds = config_manager.parse_timeout(
+            os.environ.get("EXCHANGE_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+        )
+        if not _test_connection(
+            server,
+            username,
+            password,
+            auth_type,
+            email,
+            no_verify_ssl,
+            timeout_seconds,
+        ):
+            raise CliError("Connection failed.", code="CONNECTION_ERROR", retryable=True)
         click.echo("Connected successfully.", err=True)
-    else:
-        click.echo("Warning: Connection test failed. Saving config anyway.", err=True)
+    except Exception as exc:
+        test_error = classify_exception(exc)
+        click.echo(f"Connection test failed [{test_error.code}]: {test_error.message}", err=True)
+        if not click.confirm("Save this unverified configuration anyway?", default=False):
+            formatter.success(
+                {
+                    "message": "Configuration not saved",
+                    "changed": False,
+                    "test_error": test_error.code,
+                }
+            )
+            return
 
     config_manager.save_account(email, server, username, password, auth_type, no_verify_ssl=no_verify_ssl)
     click.echo(f"Configuration saved to {config_manager.config_path}", err=True)
 
-    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
-    formatter.success({"message": "Configuration saved", "account": email})
+    formatter.success({"message": "Configuration saved", "account": email, "changed": True})
 
 
 @config.command("show")
@@ -157,8 +174,7 @@ def config_show(ctx):
 
     display = config_manager.get_display_config()
     if not display:
-        formatter.error("No configuration found. Run: exchange-cli config init", code="CONFIG_NOT_FOUND")
-        sys.exit(1)
+        raise CliError("No configuration found. Run: exchange-cli config init", code="CONFIG_NOT_FOUND")
     formatter.success(display)
 
 
@@ -173,20 +189,21 @@ def config_test(ctx):
 
     credentials = config_manager.get_account_credentials(account_email)
     if not credentials:
-        formatter.error("No configuration found. Run: exchange-cli config init", code="CONFIG_NOT_FOUND")
-        sys.exit(1)
+        raise CliError("No configuration found. Run: exchange-cli config init", code="CONFIG_NOT_FOUND")
 
     click.echo("Testing connection...", err=True)
-    if _test_connection(
-        credentials["server"],
-        credentials["username"],
-        credentials["password"],
-        credentials.get("auth_type", "ntlm"),
-        account_email or credentials.get("email"),
-        credentials.get("no_verify_ssl", False),
-    ):
-        formatter.success({"message": "Connection successful", "server": credentials["server"]})
-        return
-
-    formatter.error("Connection failed", code="CONNECTION_ERROR")
-    sys.exit(1)
+    try:
+        connected = _test_connection(
+            credentials["server"],
+            credentials["username"],
+            credentials["password"],
+            credentials.get("auth_type", "ntlm"),
+            credentials["email"],
+            credentials.get("no_verify_ssl", False),
+            credentials["timeout_seconds"],
+        )
+        if not connected:
+            raise CliError("Connection failed.", code="CONNECTION_ERROR", retryable=True)
+    except Exception as exc:
+        raise classify_exception(exc) from exc
+    formatter.success({"message": "Connection successful", "server": credentials["server"]})

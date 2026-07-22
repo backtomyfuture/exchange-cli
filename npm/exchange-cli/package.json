@@ -1,7 +1,7 @@
 {
   "name": "@backtomyfuture/exchange-cli",
   "version": "0.1.9",
-  "description": "Exchange Web Services CLI - email, calendar, tasks, contacts. Designed for AI agents.",
+  "description": "On-premises Exchange Server CLI for email, calendar, tasks, and contacts.",
   "bin": {
     "exchange-cli": "bin/exchange-cli.js"
   },
@@ -23,7 +23,7 @@
   "engines": {
     "node": ">=14"
   },
-  "keywords": ["exchange", "ews", "cli", "email", "ai-agent", "office365"],
+  "keywords": ["exchange", "exchange-server", "ews", "cli", "email", "ai-agent"],
   "license": "Apache-2.0",
   "homepage": "https://github.com/backtomyfuture/exchange-cli#readme",
   "repository": {

@@ -17,5 +17,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: ruff check exchange_cli/ tests/
+      - run: python scripts/check_release_versions.py
+      - run: ruff check exchange_cli/ tests/ scripts/
       - run: pytest tests/ -v

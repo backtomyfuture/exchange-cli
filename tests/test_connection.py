@@ -1,9 +1,10 @@
 from unittest.mock import patch
 
 import pytest
-from exchangelib.protocol import BaseProtocol
+from exchangelib.protocol import BaseProtocol, FailFast
 
 from exchange_cli.core.connection import DEFAULT_HTTP_ADAPTER_CLS, ConnectionManager, NoVerifyHTTPAdapter
+from exchange_cli.core.errors import CliError
 
 
 @pytest.fixture
@@ -25,6 +26,10 @@ class TestConnectionManager:
         mock_config.assert_called_once()
         mock_account.assert_called_once()
         assert mock_account.call_args.kwargs["primary_smtp_address"] == "test@example.com"
+        assert mock_account.call_args.kwargs["autodiscover"] is False
+        assert isinstance(mock_config.call_args.kwargs["retry_policy"], FailFast)
+        assert mock_config.call_args.kwargs["max_connections"] == 1
+        assert BaseProtocol.TIMEOUT == 30
         assert account is mock_account.return_value
 
     @patch("exchange_cli.core.connection.Credentials")
@@ -86,8 +91,10 @@ class TestConnectionManager:
 
         cfg = ConfigManager(config_dir=tmp_path / ".no-config")
         conn = ConnectionManager(cfg)
-        with pytest.raises(SystemExit):
+        with pytest.raises(CliError) as exc_info:
             conn.get_account()
+        assert exc_info.value.code == "CONFIG_NOT_FOUND"
+        assert exc_info.value.retryable is False
 
     @patch("exchange_cli.core.connection.Credentials")
     @patch("exchange_cli.core.connection.Configuration")
@@ -98,7 +105,60 @@ class TestConnectionManager:
         monkeypatch.setenv("EXCHANGE_SERVER", "env.example.com")
         monkeypatch.setenv("EXCHANGE_USERNAME", "envuser")
         monkeypatch.setenv("EXCHANGE_PASSWORD", "envpass")
+        monkeypatch.setenv("EXCHANGE_EMAIL", "env@example.com")
         cfg = ConfigManager(config_dir=tmp_path / ".exchange-cli")
         conn = ConnectionManager(cfg)
         conn.get_account()
         mock_credentials.assert_called_once_with("envuser", "envpass")
+
+    @patch("exchange_cli.core.connection.Credentials")
+    @patch("exchange_cli.core.connection.Configuration")
+    @patch("exchange_cli.core.connection.Account")
+    def test_uses_canonical_primary_smtp_address(self, mock_account, mock_config, mock_credentials, cm):
+        cm.get_account(" TEST@EXAMPLE.COM ")
+
+        assert mock_account.call_args.kwargs["primary_smtp_address"] == "test@example.com"
+
+    @patch("exchange_cli.core.connection.Credentials")
+    @patch("exchange_cli.core.connection.Configuration")
+    @patch("exchange_cli.core.connection.Account")
+    def test_applies_bounded_http_timeout(
+        self, mock_account, mock_config, mock_credentials, cm, monkeypatch
+    ):
+        monkeypatch.setenv("EXCHANGE_TIMEOUT_SECONDS", "45")
+
+        cm.get_account()
+
+        assert BaseProtocol.TIMEOUT == 45
+
+    @patch("exchange_cli.core.connection.Credentials")
+    @patch("exchange_cli.core.connection.Configuration")
+    @patch("exchange_cli.core.connection.Account")
+    def test_cache_invalidates_after_config_change(
+        self, mock_account, mock_config, mock_credentials, tmp_path, monkeypatch
+    ):
+        from exchange_cli.core.config import ConfigManager
+
+        first = mock_account.return_value
+        second = type(first)()
+        mock_account.side_effect = [first, second]
+        cfg = ConfigManager(config_dir=tmp_path / ".exchange-cli")
+        cfg.save_account("test@example.com", "mail.example.com", "user", "first", "ntlm")
+        connection = ConnectionManager(cfg)
+
+        assert connection.get_account() is first
+        monkeypatch.setenv("EXCHANGE_PASSWORD", "second")
+        assert connection.get_account() is second
+        assert mock_account.call_count == 2
+        first.protocol.close.assert_called_once()
+
+    @patch("exchange_cli.core.connection.Credentials", side_effect=ValueError("invalid username"))
+    @patch("exchange_cli.core.connection.Configuration")
+    @patch("exchange_cli.core.connection.Account")
+    def test_non_auth_value_error_is_not_invalid_auth_type(
+        self, mock_account, mock_config, mock_credentials, cm
+    ):
+        with pytest.raises(CliError) as caught:
+            cm.get_account()
+
+        assert caught.value.code == "CONFIG_INVALID"

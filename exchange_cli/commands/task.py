@@ -1,6 +1,5 @@
 """exchange-cli task {list, create, update, complete, delete}."""
 
-import sys
 from datetime import datetime
 from decimal import Decimal
 
@@ -11,8 +10,10 @@ from exchangelib.errors import ErrorItemNotFound
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager
+from ..core.errors import CliError, classify_exception
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_task
+from ..core.validation import MAX_RESULTS, require_confirmation
 
 
 def get_connection(ctx):
@@ -37,6 +38,14 @@ def _build_task(account, **kwargs):
     return _StubTask(**kwargs)
 
 
+def _parse_due_date(value: str) -> EWSDate:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise click.BadParameter("Use YYYY-MM-DD format.", param_hint="--due") from exc
+    return EWSDate.from_date(parsed)
+
+
 @click.group("task")
 @click.pass_context
 def task(ctx):
@@ -44,7 +53,7 @@ def task(ctx):
 
 
 @task.command("list")
-@click.option("--limit", default=50, type=int, help="Max results")
+@click.option("--limit", default=50, type=click.IntRange(1, MAX_RESULTS), help="Max results")
 @click.option("--status", default=None, help="Filter by status")
 @click.pass_context
 def task_list(ctx, limit, status):
@@ -56,8 +65,7 @@ def task_list(ctx, limit, status):
         results = [serialize_task(item) for item in items]
         formatter.success(results, count=len(results))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @task.command("create")
@@ -69,6 +77,7 @@ def task_list(ctx, limit, status):
 def task_create(ctx, subject, due, body, status):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
+        due_date = _parse_due_date(due) if due else None
         account = get_connection(ctx)
         task_obj = _build_task(
             account,
@@ -77,13 +86,12 @@ def task_create(ctx, subject, due, body, status):
             body=body,
             status=status,
         )
-        if due:
-            task_obj.due_date = EWSDate.from_date(datetime.strptime(due, "%Y-%m-%d").date())
+        if due_date:
+            task_obj.due_date = due_date
         task_obj.save()
         formatter.success({"message": "Task created", "id": task_obj.id, "subject": subject})
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @task.command("update")
@@ -95,26 +103,31 @@ def task_create(ctx, subject, due, body, status):
 def task_update(ctx, task_id, subject, due, status):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
+        if all(value is None for value in (subject, due, status)):
+            raise CliError(
+                "At least one update option is required.",
+                code="INVALID_INPUT",
+                exit_code=2,
+            )
+        due_date = _parse_due_date(due) if due is not None else None
         account = get_connection(ctx)
         task_obj = account.tasks.get(id=task_id)
         fields = []
-        if subject:
+        if subject is not None:
             task_obj.subject = subject
             fields.append("subject")
-        if due:
-            task_obj.due_date = EWSDate.from_date(datetime.strptime(due, "%Y-%m-%d").date())
+        if due_date is not None:
+            task_obj.due_date = due_date
             fields.append("due_date")
-        if status:
+        if status is not None:
             task_obj.status = status
             fields.append("status")
         task_obj.save(update_fields=fields)
         formatter.success({"message": "Task updated", "id": task_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Task not found: {task_id}", code="NOT_FOUND")
-        sys.exit(1)
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Task not found: {task_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @task.command("complete")
@@ -129,27 +142,25 @@ def task_complete(ctx, task_id):
         task_obj.percent_complete = Decimal(100)
         task_obj.save(update_fields=["status", "percent_complete"])
         formatter.success({"message": "Task completed", "id": task_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Task not found: {task_id}", code="NOT_FOUND")
-        sys.exit(1)
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Task not found: {task_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @task.command("delete")
 @click.argument("task_id")
+@click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
-def task_delete(ctx, task_id):
+def task_delete(ctx, task_id, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    require_confirmation(confirm, action="task.delete")
     try:
         account = get_connection(ctx)
         task_obj = account.tasks.get(id=task_id)
         task_obj.delete()
-        formatter.success({"message": "Task deleted", "id": task_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Task not found: {task_id}", code="NOT_FOUND")
-        sys.exit(1)
+        formatter.success({"message": "Task deleted", "id": task_id, "permanent": True})
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Task not found: {task_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc

@@ -99,7 +99,6 @@ exchange-cli email read MESSAGE_ID --body-format markdown   # 显式指定
 | `core/content_cleaner.py` | 新建模块 |
 | `core/serializers.py` | `serialize_email_detail` 增加 `body_format` 参数，默认 markdown |
 | `commands/email.py` | `email read` 新增 `--body-format` CLI 选项 |
-| `core/daemon.py` | 详情序列化同步传递 `body_format`，默认 markdown |
 | `pyproject.toml` | 新增 `markdownify`、`beautifulsoup4` 依赖 |
 
 **不改动**：

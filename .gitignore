@@ -12,3 +12,6 @@ build/
 .pyinstaller/
 *.spec
 npm/platforms/*/bin/
+node_modules/
+npm/platforms/*/package-lock.json
+exchange-cli-workspace/

@@ -1,6 +1,5 @@
 """exchange-cli calendar {list, create, update, delete}."""
 
-import sys
 from datetime import datetime, timedelta
 
 import click
@@ -9,8 +8,10 @@ from exchangelib.errors import ErrorItemNotFound
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager
+from ..core.errors import CliError, classify_exception
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_calendar_event
+from ..core.validation import ensure_start_before_end, require_confirmation
 
 
 def get_connection(ctx):
@@ -60,7 +61,6 @@ def calendar(ctx):
 def calendar_list(ctx, start, end):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
-        account = get_connection(ctx)
         timezone = EWSTimeZone.localzone()
         now = datetime.now()
         if start:
@@ -72,12 +72,13 @@ def calendar_list(ctx, start, end):
         else:
             tomorrow = now + timedelta(days=1)
             end_dt = EWSDateTime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=timezone)
+        ensure_start_before_end(start_dt, end_dt, action="calendar.list")
+        account = get_connection(ctx)
         events = list(account.calendar.view(start=start_dt, end=end_dt))
         results = [serialize_calendar_event(event) for event in events]
         formatter.success(results, count=len(results))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @calendar.command("create")
@@ -87,30 +88,39 @@ def calendar_list(ctx, start, end):
 @click.option("--location", default=None, help="Location")
 @click.option("--body", default="", help="Event body")
 @click.option("--attendees", default=None, help="Comma-separated attendee emails")
+@click.option("--confirm", is_flag=True, help="Confirm sending meeting invitations when attendees are set")
 @click.pass_context
-def calendar_create(ctx, subject, start, end, location, body, attendees):
+def calendar_create(ctx, subject, start, end, location, body, attendees, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
+        start_dt = _parse_datetime(start)
+        end_dt = _parse_datetime(end)
+        ensure_start_before_end(start_dt, end_dt, action="calendar.create")
+        attendee_addresses = (
+            [address.strip() for address in attendees.split(",") if address.strip()]
+            if attendees
+            else []
+        )
+        if attendee_addresses:
+            require_confirmation(confirm, action="calendar.create_with_attendees")
         account = get_connection(ctx)
         event = _build_event(
             account,
             folder=account.calendar,
             subject=subject,
-            start=_parse_datetime(start),
-            end=_parse_datetime(end),
+            start=start_dt,
+            end=end_dt,
             location=location,
             body=body,
         )
-        if attendees:
+        if attendee_addresses:
             event.required_attendees = [
-                Attendee(mailbox=Mailbox(email_address=addr.strip()))
-                for addr in attendees.split(",")
+                Attendee(mailbox=Mailbox(email_address=address)) for address in attendee_addresses
             ]
-        event.save(send_meeting_invitations="SendToAllAndSaveCopy" if attendees else "SendToNone")
+        event.save(send_meeting_invitations="SendToAllAndSaveCopy" if attendee_addresses else "SendToNone")
         formatter.success({"message": "Event created", "id": event.id, "subject": subject})
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @calendar.command("update")
@@ -123,44 +133,56 @@ def calendar_create(ctx, subject, start, end, location, body, attendees):
 def calendar_update(ctx, event_id, subject, start, end, location):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
+        if all(value is None for value in (subject, start, end, location)):
+            raise CliError(
+                "At least one update option is required.",
+                code="INVALID_INPUT",
+                exit_code=2,
+            )
+        start_dt = _parse_datetime(start) if start is not None else None
+        end_dt = _parse_datetime(end) if end is not None else None
         account = get_connection(ctx)
         event = account.calendar.get(id=event_id)
+        if start_dt is not None or end_dt is not None:
+            ensure_start_before_end(
+                start_dt if start_dt is not None else event.start,
+                end_dt if end_dt is not None else event.end,
+                action="calendar.update",
+            )
         fields = []
-        if subject:
+        if subject is not None:
             event.subject = subject
             fields.append("subject")
-        if start:
-            event.start = _parse_datetime(start)
+        if start_dt is not None:
+            event.start = start_dt
             fields.append("start")
-        if end:
-            event.end = _parse_datetime(end)
+        if end_dt is not None:
+            event.end = end_dt
             fields.append("end")
-        if location:
+        if location is not None:
             event.location = location
             fields.append("location")
         event.save(update_fields=fields)
         formatter.success({"message": "Event updated", "id": event_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Event not found: {event_id}", code="NOT_FOUND")
-        sys.exit(1)
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Event not found: {event_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @calendar.command("delete")
 @click.argument("event_id")
+@click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
-def calendar_delete(ctx, event_id):
+def calendar_delete(ctx, event_id, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    require_confirmation(confirm, action="calendar.delete")
     try:
         account = get_connection(ctx)
         event = account.calendar.get(id=event_id)
         event.delete()
-        formatter.success({"message": "Event deleted", "id": event_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Event not found: {event_id}", code="NOT_FOUND")
-        sys.exit(1)
+        formatter.success({"message": "Event deleted", "id": event_id, "permanent": True})
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Event not found: {event_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc

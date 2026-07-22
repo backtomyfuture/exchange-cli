@@ -46,8 +46,16 @@ class TestDraftSend:
         draft = MagicMock()
         draft.id = "D1"
         mock_conn.drafts.get.return_value = draft
-        result = runner.invoke(cli, ["draft", "send", "D1"])
+        result = runner.invoke(cli, ["draft", "send", "D1", "--confirm"])
         assert result.exit_code == 0
+
+    def test_send_requires_confirmation_before_connection(self, runner):
+        with patch("exchange_cli.commands.draft.get_connection") as get_connection:
+            result = runner.invoke(cli, ["draft", "send", "D1"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
 
 
 class TestDraftDelete:
@@ -55,5 +63,6 @@ class TestDraftDelete:
         draft = MagicMock()
         draft.id = "D1"
         mock_conn.drafts.get.return_value = draft
-        result = runner.invoke(cli, ["draft", "delete", "D1"])
+        result = runner.invoke(cli, ["draft", "delete", "D1", "--confirm"])
         assert result.exit_code == 0
+        assert json.loads(result.output)["data"]["permanent"] is True
