@@ -1,14 +1,14 @@
 """exchange-cli contact {list, search}."""
 
-import sys
-
 import click
 from exchangelib import Q
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager
+from ..core.errors import classify_exception
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_contact
+from ..core.validation import MAX_RESULTS
 
 
 def get_connection(ctx):
@@ -25,7 +25,7 @@ def contact(ctx):
 
 
 @contact.command("list")
-@click.option("--limit", default=50, type=int, help="Max contacts to return")
+@click.option("--limit", default=50, type=click.IntRange(1, MAX_RESULTS), help="Max contacts to return")
 @click.pass_context
 def contact_list(ctx, limit):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
@@ -35,13 +35,12 @@ def contact_list(ctx, limit):
         results = [serialize_contact(contact_obj) for contact_obj in items]
         formatter.success(results, count=len(results))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @contact.command("search")
 @click.argument("query")
-@click.option("--limit", default=20, type=int, help="Max results")
+@click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Max results")
 @click.pass_context
 def contact_search(ctx, query, limit):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
@@ -52,5 +51,4 @@ def contact_search(ctx, query, limit):
         results = [serialize_contact(contact_obj) for contact_obj in items]
         formatter.success(results, count=len(results))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc

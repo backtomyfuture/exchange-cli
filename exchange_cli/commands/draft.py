@@ -1,15 +1,15 @@
 """exchange-cli draft {list, create, send, delete}."""
 
-import sys
-
 import click
 from exchangelib import Account, HTMLBody, Mailbox, Message
 from exchangelib.errors import ErrorItemNotFound
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager
+from ..core.errors import CliError, classify_exception
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_email_summary
+from ..core.validation import MAX_RESULTS, require_confirmation
 
 
 def get_connection(ctx):
@@ -41,7 +41,7 @@ def draft(ctx):
 
 
 @draft.command("list")
-@click.option("--limit", default=20, type=int, help="Number of drafts to return")
+@click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Number of drafts to return")
 @click.pass_context
 def draft_list(ctx, limit):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
@@ -51,8 +51,7 @@ def draft_list(ctx, limit):
         results = [serialize_email_summary(item) for item in items]
         formatter.success(results, count=len(results))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @draft.command("create")
@@ -78,41 +77,40 @@ def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_type):
         message.save()
         formatter.success({"message": "Draft created", "id": message.id, "subject": subject})
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @draft.command("send")
 @click.argument("draft_id")
+@click.option("--confirm", is_flag=True, help="Confirm sending the draft")
 @click.pass_context
-def draft_send(ctx, draft_id):
+def draft_send(ctx, draft_id, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    require_confirmation(confirm, action="draft.send")
     try:
         account = get_connection(ctx)
         message = account.drafts.get(id=draft_id)
         message.send()
         formatter.success({"message": "Draft sent", "id": draft_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Draft not found: {draft_id}", code="NOT_FOUND")
-        sys.exit(1)
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Draft not found: {draft_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @draft.command("delete")
 @click.argument("draft_id")
+@click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
-def draft_delete(ctx, draft_id):
+def draft_delete(ctx, draft_id, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    require_confirmation(confirm, action="draft.delete")
     try:
         account = get_connection(ctx)
         message = account.drafts.get(id=draft_id)
         message.delete()
-        formatter.success({"message": "Draft deleted", "id": draft_id})
-    except ErrorItemNotFound:
-        formatter.error(f"Draft not found: {draft_id}", code="NOT_FOUND")
-        sys.exit(1)
+        formatter.success({"message": "Draft deleted", "id": draft_id, "permanent": True})
+    except ErrorItemNotFound as exc:
+        raise CliError(f"Draft not found: {draft_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc

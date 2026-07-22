@@ -27,6 +27,25 @@ class TestOutputFormatter:
         data = json.loads(buf.getvalue())
         assert data == {"ok": False, "error": "Connection failed", "code": "CONNECTION_ERROR"}
 
+    def test_json_error_with_retry_metadata(self):
+        formatter = OutputFormatter("json")
+        buf = io.StringIO()
+        formatter.error(
+            "Connection failed",
+            code="CONNECTION_ERROR",
+            retryable=True,
+            details={"stage": "connect"},
+            file=buf,
+        )
+        data = json.loads(buf.getvalue())
+        assert data == {
+            "ok": False,
+            "error": "Connection failed",
+            "code": "CONNECTION_ERROR",
+            "retryable": True,
+            "details": {"stage": "connect"},
+        }
+
     def test_text_success_single(self):
         formatter = OutputFormatter("text")
         buf = io.StringIO()

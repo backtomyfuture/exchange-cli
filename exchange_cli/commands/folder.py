@@ -1,11 +1,10 @@
 """exchange-cli folder {list, tree}."""
 
-import sys
-
 import click
 
 from ..core.config import ConfigManager
 from ..core.connection import ConnectionManager
+from ..core.errors import classify_exception
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_folder
 
@@ -42,8 +41,7 @@ def folder_list(ctx):
         results = [serialize_folder(folder_obj) for folder_obj in folders]
         formatter.success(results, count=len(results))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc
 
 
 @folder.command("tree")
@@ -57,5 +55,4 @@ def folder_tree(ctx):
             tree.extend(_walk_tree(folder_obj))
         formatter.success(tree, count=len(tree))
     except Exception as exc:
-        formatter.error(str(exc), code="SERVER_ERROR")
-        sys.exit(1)
+        raise classify_exception(exc) from exc

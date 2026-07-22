@@ -23,7 +23,6 @@ HIDDEN_IMPORTS = [
     "exchange_cli.commands.calendar",
     "exchange_cli.commands.config",
     "exchange_cli.commands.contact",
-    "exchange_cli.commands.daemon",
     "exchange_cli.commands.draft",
     "exchange_cli.commands.email",
     "exchange_cli.commands.folder",
@@ -54,11 +53,16 @@ def _is_linux(platform: str) -> bool:
     return platform.startswith("linux")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Prepare npm/platforms/<platform>/bin payload from PyInstaller dist")
-    parser.add_argument("--platform", required=True, choices=SUPPORTED_PLATFORMS, help="Target platform (e.g. darwin-arm64)")
+    parser.add_argument(
+        "--platform",
+        required=True,
+        choices=SUPPORTED_PLATFORMS,
+        help="Target platform (e.g. darwin-arm64)",
+    )
     parser.add_argument("--skip-build", action="store_true", help="Do not rebuild dist/ via pyinstaller")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     platform: str = args.platform
     repo_root = Path(__file__).resolve().parents[1]
@@ -74,11 +78,14 @@ def main() -> int:
         if not entrypoint.exists():
             raise FileNotFoundError(f"Entrypoint does not exist: {entrypoint}")
 
+        spec_dir = repo_root / "build" / "spec"
+        spec_dir.mkdir(parents=True, exist_ok=True)
         cmd: list[str] = [
             sys.executable, "-m", "PyInstaller",
             "--noconfirm",
             "--name", "exchange-cli",
             "--console",
+            "--specpath", str(spec_dir),
             "--collect-all", "exchangelib",
         ]
         for mod in HIDDEN_IMPORTS:

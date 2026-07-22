@@ -35,6 +35,27 @@ class TestTaskCreate:
         result = runner.invoke(cli, ["task", "create", "--subject", "Review PR"])
         assert result.exit_code == 0
 
+    def test_create_rejects_invalid_due_date_before_connection(self, runner):
+        with patch("exchange_cli.commands.task.get_connection") as get_connection:
+            result = runner.invoke(
+                cli,
+                ["task", "create", "--subject", "Review PR", "--due", "2024/07/15"],
+            )
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "INVALID_INPUT"
+        get_connection.assert_not_called()
+
+
+class TestTaskUpdate:
+    def test_update_requires_at_least_one_field_before_connection(self, runner):
+        with patch("exchange_cli.commands.task.get_connection") as get_connection:
+            result = runner.invoke(cli, ["task", "update", "T1"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "INVALID_INPUT"
+        get_connection.assert_not_called()
+
 
 class TestTaskComplete:
     def test_complete(self, runner, mock_conn):
@@ -43,3 +64,23 @@ class TestTaskComplete:
         mock_conn.tasks.get.return_value = task
         result = runner.invoke(cli, ["task", "complete", "T1"])
         assert result.exit_code == 0
+
+
+class TestTaskDelete:
+    def test_delete(self, runner, mock_conn):
+        task = MagicMock()
+        task.id = "T1"
+        mock_conn.tasks.get.return_value = task
+
+        result = runner.invoke(cli, ["task", "delete", "T1", "--confirm"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["data"]["permanent"] is True
+
+    def test_delete_requires_confirmation_before_connection(self, runner):
+        with patch("exchange_cli.commands.task.get_connection") as get_connection:
+            result = runner.invoke(cli, ["task", "delete", "T1"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
