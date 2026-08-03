@@ -110,6 +110,18 @@ exchange-cli config show
 - `CONFIG_KEY_MISSING` 或 `CONFIG_DECRYPT_FAILED` 时停止并请求用户处理；不要擅自删除或覆盖配置与密钥。
 - 命令退出码非零时，即使已有 JSON 输出，也视为失败。
 
+## 邮件详情与会话字段
+
+`email read MESSAGE_ID` 的 `data` 除基础邮件字段外，还会稳定返回以下详情字段：
+
+- `body`：按 `--body-format` 输出的正文；默认是 Markdown，`--body-format html` 时是 HTML。
+- `body_html`：完整原始 HTML 正文，不受 `--body-format` 影响。
+- `unique_body_html`：EWS 返回的本轮新增 HTML 正文；服务器未提供时为 `null`。它不能替代 `body_html`。
+- `conversation_id`：Exchange 会话 ID；不可用时为 `null`。
+- `internet_message_id`：邮件的 RFC Message-ID（通常带尖括号）；不可用时为 `null`。
+
+`id` 是 EWS ItemId，不能替代 `internet_message_id`。`email list`、`email search` 与 `email watch` 仍只返回摘要，不承诺携带这些详情/会话字段。需要判断回复或转发的本轮变化时，先用 `email read` 获取 `unique_body_html`；其为 `null` 时再由调用方基于 `body_html` 做正文分界兜底。
+
 ## 命令地图
 
 | 领域 | 命令 |
@@ -140,6 +152,7 @@ exchange-cli config show
 ```bash
 exchange-cli email list --folder inbox --unread --limit 20
 exchange-cli email read MESSAGE_ID
+exchange-cli email read MESSAGE_ID --body-format html
 exchange-cli email read MESSAGE_ID --save-attachments ./downloads
 ```
 

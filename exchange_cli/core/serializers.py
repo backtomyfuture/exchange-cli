@@ -15,6 +15,14 @@ def _safe_isoformat(value):
     return value.isoformat()
 
 
+def _serialize_conversation_id(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return _safe_str(getattr(value, "id", None))
+
+
 def serialize_mailbox(mailbox):
     if mailbox is None:
         return None
@@ -60,6 +68,10 @@ def serialize_email_detail(message, body_format="markdown"):
     else:
         result["body"] = raw_body
     result["body_format"] = body_format
+    result["body_html"] = raw_body
+    result["unique_body_html"] = _safe_str(getattr(message, "unique_body", None))
+    result["conversation_id"] = _serialize_conversation_id(getattr(message, "conversation_id", None))
+    result["internet_message_id"] = _safe_str(getattr(message, "message_id", None))
     result["bcc"] = _serialize_mailbox_list(message.bcc_recipients)
     result["attachments"] = [serialize_attachment_summary(att) for att in (message.attachments or [])]
     return result

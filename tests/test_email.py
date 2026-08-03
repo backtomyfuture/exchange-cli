@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 from exchangelib import FileAttachment
 from exchangelib.errors import DoesNotExist, TransportError
+from exchangelib.properties import ConversationId
 
 from exchange_cli.commands.email import _find_message, _parse_search_date
 from exchange_cli.main import cli
@@ -30,6 +31,9 @@ def _mock_message(message_id="AAMk123", subject="Test", is_read=True):
     message.importance = "Normal"
     message.text_body = "Preview"
     message.body = "<p>Full body</p>"
+    message.unique_body = None
+    message.conversation_id = None
+    message.message_id = None
     message.attachments = []
     return message
 
@@ -135,6 +139,23 @@ class TestEmailRead:
         data = json.loads(result.output)
         assert data["data"]["body_format"] == "html"
         assert "<html>" in data["data"]["body"]
+
+    def test_read_returns_minimal_conversation_context(self, runner, mock_conn):
+        message = _mock_message()
+        message.body = "<html><body><p>Full thread body</p></body></html>"
+        message.unique_body = "<html><body><p>Current reply only</p></body></html>"
+        message.conversation_id = ConversationId(id="AAQkAGconversation", changekey="CK1")
+        message.message_id = "<reply-42@example.com>"
+
+        with patch("exchange_cli.commands.email._find_message", return_value=message):
+            result = runner.invoke(cli, ["email", "read", "AAMk123"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)["data"]
+        assert data["body_html"] == "<html><body><p>Full thread body</p></body></html>"
+        assert data["unique_body_html"] == "<html><body><p>Current reply only</p></body></html>"
+        assert data["conversation_id"] == "AAQkAGconversation"
+        assert data["internet_message_id"] == "<reply-42@example.com>"
 
     def test_read_not_found(self, runner, mock_conn):
         with patch("exchange_cli.commands.email._find_message", return_value=None):
