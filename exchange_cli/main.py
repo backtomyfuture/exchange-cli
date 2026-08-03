@@ -13,6 +13,7 @@ _COMMAND_MODULES = {
     "calendar": "exchange_cli.commands.calendar",
     "config": "exchange_cli.commands.config",
     "contact": "exchange_cli.commands.contact",
+    "doctor": "exchange_cli.commands.doctor",
     "draft": "exchange_cli.commands.draft",
     "email": "exchange_cli.commands.email",
     "folder": "exchange_cli.commands.folder",
@@ -114,6 +115,7 @@ def cli(ctx, fmt, config_path, account_email, verbose):
     \b
     Quick start:
       exchange-cli config init
+      exchange-cli doctor
       exchange-cli email list
       exchange-cli email read MSG_ID
       exchange-cli email send --to "a@x.com" --subject "Hi" --body "Hello" --confirm

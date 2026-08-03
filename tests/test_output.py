@@ -69,3 +69,50 @@ class TestOutputFormatter:
         formatter.error("Auth failed", code="AUTH_ERROR", file=buf)
         output = buf.getvalue()
         assert "Auth failed" in output
+
+    def test_json_diagnostic_failure_contains_check_results(self):
+        formatter = OutputFormatter("json")
+        buf = io.StringIO()
+        report = {"overall": "fail", "checks": [{"id": "ews_root", "status": "fail"}]}
+
+        formatter.diagnostic(
+            report,
+            ok=False,
+            error="Authentication failed",
+            code="AUTH_ERROR",
+            retryable=False,
+            file=buf,
+        )
+
+        assert json.loads(buf.getvalue()) == {
+            "ok": False,
+            "error": "Authentication failed",
+            "code": "AUTH_ERROR",
+            "retryable": False,
+            "data": report,
+        }
+
+    def test_text_diagnostic_includes_check_and_remediation(self):
+        formatter = OutputFormatter("text")
+        buf = io.StringIO()
+
+        formatter.diagnostic(
+            {
+                "overall": "warn",
+                "checks": [
+                    {
+                        "id": "tls_verification",
+                        "status": "warn",
+                        "message": "TLS certificate verification is disabled.",
+                        "remediation": "Enable certificate verification when possible.",
+                    }
+                ],
+            },
+            file=buf,
+        )
+
+        assert buf.getvalue() == (
+            "Doctor: WARN\n"
+            "WARN tls_verification: TLS certificate verification is disabled.\n"
+            "  Fix: Enable certificate verification when possible.\n"
+        )

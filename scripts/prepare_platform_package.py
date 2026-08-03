@@ -23,6 +23,7 @@ HIDDEN_IMPORTS = [
     "exchange_cli.commands.calendar",
     "exchange_cli.commands.config",
     "exchange_cli.commands.contact",
+    "exchange_cli.commands.doctor",
     "exchange_cli.commands.draft",
     "exchange_cli.commands.email",
     "exchange_cli.commands.folder",

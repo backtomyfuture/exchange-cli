@@ -18,6 +18,7 @@
 ```bash
 pip install exchange-cli
 exchange-cli config init
+exchange-cli doctor
 exchange-cli email list
 ```
 
@@ -39,7 +40,8 @@ npm install -g @backtomyfuture/exchange-cli
 
 | 资源 | 子命令 |
 |------|--------|
-| `config` | `init`, `show`, `test` |
+| `config` | `init`, `show` |
+| 诊断 | `doctor`（`--offline` 跳过 EWS 连接探针） |
 | `email` | `list`, `read`, `send`, `reply`, `forward`, `search` |
 | `draft` | `list`, `create`, `send`, `delete` |
 | `folder` | `list`, `tree` |
@@ -50,6 +52,8 @@ npm install -g @backtomyfuture/exchange-cli
 ## 示例
 
 ```bash
+exchange-cli doctor
+exchange-cli doctor --offline
 exchange-cli email list --limit 10
 exchange-cli email read AAMk123
 exchange-cli email send --to "a@x.com" --subject "Hi" --body "Hello" --confirm
@@ -89,6 +93,8 @@ exchange-cli contact search "John"
 - `EXCHANGE_TIMEOUT_SECONDS`（默认 `30`，范围 `1..300`）
 
 环境变量按字段覆盖配置文件，而不是整体替换配置。`--account` 仅用于断言当前账号，必须与已配置的单账号匹配（忽略大小写），不能切换账号。
+
+`exchange-cli doctor` 会检查有效配置、TLS 证书校验设置，并通过刷新 EWS 根目录验证认证和最小只读访问；它不会读取邮件或写入 Exchange。加 `--offline` 时仅跳过这项 EWS 远端探针。检查失败会返回非零退出码，同时在 JSON 的 `data.checks` 中保留各检查项和修复建议。
 
 `EXCHANGE_NO_VERIFY_SSL=1` 会关闭 TLS 证书校验，只应在已确认风险的受控内网中临时使用，否则可能遭受中间人攻击。Fernet 密钥与密文都保存在同一台机器，只能降低配置文件被单独复制或误读的风险，不能防御同一系统账号已经失陷的情况。
 

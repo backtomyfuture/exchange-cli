@@ -63,8 +63,10 @@ exchange-cli --config /path/to/config email list
 先检查连接：
 
 ```bash
-exchange-cli config test
+exchange-cli doctor
 ```
+
+`doctor` 默认会验证有效配置、TLS 设置和最小只读 EWS 访问；在不希望连接 Exchange 时使用 `exchange-cli doctor --offline`。
 
 若返回 `CONFIG_NOT_FOUND`，引导用户交互运行：
 
@@ -126,7 +128,8 @@ exchange-cli config show
 
 | 领域 | 命令 |
 |---|---|
-| 配置 | `config init`、`config show`、`config test` |
+| 配置 | `config init`、`config show` |
+| 诊断 | `doctor`（`--offline` 可跳过 EWS 探针） |
 | 邮件 | `email list`、`email read`、`email search`、`email send`、`email reply`、`email forward`、`email watch` |
 | 草稿 | `draft list`、`draft create`、`draft send`、`draft delete` |
 | 文件夹 | `folder list`、`folder tree` |

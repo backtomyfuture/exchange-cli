@@ -1,6 +1,6 @@
 {
   "name": "@backtomyfuture/exchange-cli",
-  "version": "0.1.11",
+  "version": "0.2.0",
   "description": "On-premises Exchange Server CLI for email, calendar, tasks, and contacts.",
   "bin": {
     "exchange-cli": "bin/exchange-cli.js"
@@ -13,12 +13,12 @@
     "install.js"
   ],
   "optionalDependencies": {
-    "@backtomyfuture/exchange-cli-darwin-arm64": "0.1.11",
-    "@backtomyfuture/exchange-cli-darwin-x64": "0.1.11",
-    "@backtomyfuture/exchange-cli-linux-x64": "0.1.11",
-    "@backtomyfuture/exchange-cli-linux-arm64": "0.1.11",
-    "@backtomyfuture/exchange-cli-win32-x64": "0.1.11",
-    "@backtomyfuture/exchange-cli-win32-ia32": "0.1.11"
+    "@backtomyfuture/exchange-cli-darwin-arm64": "0.2.0",
+    "@backtomyfuture/exchange-cli-darwin-x64": "0.2.0",
+    "@backtomyfuture/exchange-cli-linux-x64": "0.2.0",
+    "@backtomyfuture/exchange-cli-linux-arm64": "0.2.0",
+    "@backtomyfuture/exchange-cli-win32-x64": "0.2.0",
+    "@backtomyfuture/exchange-cli-win32-ia32": "0.2.0"
   },
   "engines": {
     "node": ">=14"

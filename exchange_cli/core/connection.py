@@ -87,6 +87,21 @@ def create_account(credentials_dict: dict[str, Any]) -> Account:
         ) from exc
 
 
+def probe_connection(credentials_dict: dict[str, Any]) -> bool:
+    """Authenticate and perform the smallest read-only EWS operation."""
+
+    required_fields = ("email", "server", "username", "password")
+    if any(
+        not isinstance(credentials_dict.get(field), str) or not credentials_dict[field].strip()
+        for field in required_fields
+    ):
+        return False
+
+    account = create_account(credentials_dict)
+    account.root.refresh()
+    return True
+
+
 def _credentials_fingerprint(credentials_dict: dict[str, Any]) -> str:
     serialized = json.dumps(credentials_dict, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode()).hexdigest()

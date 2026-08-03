@@ -52,6 +52,48 @@ class OutputFormatter:
         else:
             handle.write(f"Error: {message}\n")
 
+    def diagnostic(
+        self,
+        data: dict,
+        *,
+        ok: bool = True,
+        error: str | None = None,
+        code: str | None = None,
+        retryable: bool | None = None,
+        file=None,
+    ):
+        """Render a diagnostic report while preserving checks on failure."""
+
+        handle = file or sys.stdout
+        if self.fmt == "json":
+            payload = {"ok": ok, "data": data}
+            if not ok:
+                payload["error"] = error or "Doctor checks failed."
+                if code:
+                    payload["code"] = code
+                if retryable is not None:
+                    payload["retryable"] = retryable
+            json.dump(payload, handle, ensure_ascii=False, default=_default_serializer)
+            handle.write("\n")
+            return
+
+        overall = str(data.get("overall", "unknown")).upper()
+        handle.write(f"Doctor: {overall}\n")
+        for check in data.get("checks", []):
+            status = str(check.get("status", "unknown")).upper()
+            check_id = check.get("id", "unknown")
+            message = check.get("message")
+            check_code = check.get("code")
+            suffix = f" [{check_code}]" if check_code else ""
+            detail = f": {message}" if message else ""
+            handle.write(f"{status} {check_id}{suffix}{detail}\n")
+            remediation = check.get("remediation")
+            if remediation:
+                handle.write(f"  Fix: {remediation}\n")
+
+        if not ok and error:
+            self.error(error, code=code, retryable=retryable, file=handle)
+
     def _print_text(self, data, handle):
         if isinstance(data, list):
             if not data:

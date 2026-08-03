@@ -32,6 +32,14 @@ def test_npm_token_is_scoped_to_publish_job():
     assert "NPM_TOKEN" in publish_section
 
 
+def test_platform_build_includes_every_lazy_loaded_command():
+    builder = (Path(__file__).parents[1] / "scripts" / "prepare_platform_package.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"exchange_cli.commands.doctor"' in builder
+
+
 def test_publish_job_uses_integrity_checked_idempotent_script_for_every_package():
     workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
