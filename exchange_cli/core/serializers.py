@@ -60,21 +60,27 @@ def serialize_email_summary(message, include_body_preview: bool = True):
     }
 
 
-def serialize_email_detail(message, body_format="markdown"):
+def serialize_email_detail(message, body_format="markdown", fields: list[str] | None = None):
     result = serialize_email_summary(message)
-    raw_body = _safe_str(message.body)
-    if body_format == "markdown" and raw_body:
-        result["body"] = html_to_markdown(raw_body)
-    else:
-        result["body"] = raw_body
-    result["body_format"] = body_format
-    result["body_html"] = raw_body
-    result["unique_body_html"] = _safe_str(getattr(message, "unique_body", None))
+    need_bodies = fields is None or any(
+        field in fields for field in ("body", "body_html", "unique_body_html", "body_format")
+    )
+    if need_bodies:
+        raw_body = _safe_str(message.body)
+        if body_format == "markdown" and raw_body:
+            result["body"] = html_to_markdown(raw_body)
+        else:
+            result["body"] = raw_body
+        result["body_format"] = body_format
+        result["body_html"] = raw_body
+        result["unique_body_html"] = _safe_str(getattr(message, "unique_body", None))
     result["conversation_id"] = _serialize_conversation_id(getattr(message, "conversation_id", None))
     result["internet_message_id"] = _safe_str(getattr(message, "message_id", None))
     result["bcc"] = _serialize_mailbox_list(message.bcc_recipients)
     result["attachments"] = [serialize_attachment_summary(att) for att in (message.attachments or [])]
-    return result
+    if fields is None:
+        return result
+    return {field: result[field] for field in fields if field in result}
 
 
 def _serialize_attendee(attendee):
@@ -150,3 +156,18 @@ def serialize_folder(folder):
         "unread_count": getattr(folder, "unread_count", 0),
         "child_folder_count": getattr(folder, "child_folder_count", 0),
     }
+
+
+def serialize_resolved_name(mailbox, contact=None):
+    payload = serialize_mailbox(mailbox) or {"name": "", "email": ""}
+    payload["mailbox_type"] = _safe_str(getattr(mailbox, "mailbox_type", None)) if mailbox else None
+    if contact is None:
+        payload["display_name"] = payload["name"]
+        payload["source"] = "directory"
+        return payload
+    payload["display_name"] = getattr(contact, "display_name", None) or payload["name"]
+    payload["job_title"] = getattr(contact, "job_title", None) or ""
+    payload["department"] = getattr(contact, "department", None) or ""
+    payload["company"] = getattr(contact, "company_name", None) or ""
+    payload["source"] = "directory"
+    return payload

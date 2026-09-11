@@ -20,3 +20,5 @@ jobs:
       - run: python scripts/check_release_versions.py
       - run: ruff check exchange_cli/ tests/ scripts/
       - run: pytest tests/ -v
+      - name: Smoke-test installed console script
+        run: python -c "import subprocess, exchange_cli; out=subprocess.check_output(['exchange-cli','--version'], text=True); assert exchange_cli.__version__ in out"

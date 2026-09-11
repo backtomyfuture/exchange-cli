@@ -8,6 +8,7 @@ from exchange_cli.core.serializers import (
     serialize_email_summary,
     serialize_folder,
     serialize_mailbox,
+    serialize_resolved_name,
     serialize_task,
 )
 
@@ -152,6 +153,17 @@ class TestSerializeContact:
         result = serialize_contact(contact)
         assert result["display_name"] == "John Doe"
         assert len(result["emails"]) == 1
+
+
+class TestSerializeResolvedName:
+    def test_includes_directory_source(self):
+        mailbox = _mock_mailbox("Zhang San", "zhang.san@example.com")
+        mailbox.mailbox_type = "Mailbox"
+        contact = MagicMock(display_name="Zhang San", job_title="Engineer", department="IT", company_name="Acme")
+        result = serialize_resolved_name(mailbox, contact)
+        assert result["email"] == "zhang.san@example.com"
+        assert result["source"] == "directory"
+        assert result["job_title"] == "Engineer"
 
 
 class TestSerializeFolder:

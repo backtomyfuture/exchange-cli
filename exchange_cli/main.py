@@ -17,6 +17,7 @@ _COMMAND_MODULES = {
     "draft": "exchange_cli.commands.draft",
     "email": "exchange_cli.commands.email",
     "folder": "exchange_cli.commands.folder",
+    "schema": "exchange_cli.commands.schema",
     "task": "exchange_cli.commands.task",
 }
 
@@ -79,6 +80,7 @@ class LazyGroup(click.Group):
             code=cli_error.code,
             retryable=cli_error.retryable,
             details=cli_error.details,
+            outcome=cli_error.outcome,
         )
         if standalone_mode:
             raise SystemExit(cli_error.exit_code)

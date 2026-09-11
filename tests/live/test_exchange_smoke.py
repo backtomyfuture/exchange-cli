@@ -21,7 +21,7 @@ def test_live_connection_and_inbox_summary_shape():
     try:
         account = connection_manager.get_account()
         account.root.refresh()
-        results = list_email_summaries(
+        results, _truncated = list_email_summaries(
             account,
             folder_name="inbox",
             limit=1,

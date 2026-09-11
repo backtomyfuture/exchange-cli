@@ -1,37 +1,29 @@
 """exchange-cli draft {list, create, send, delete}."""
 
+from pathlib import Path
+
 import click
-from exchangelib import Account, HTMLBody, Mailbox, Message
+from exchangelib import FileAttachment, HTMLBody, Mailbox, Message
 from exchangelib.errors import ErrorItemNotFound
 
-from ..core.config import ConfigManager
-from ..core.connection import ConnectionManager
-from ..core.errors import CliError, classify_exception
+from ..core.cli import get_account
+from ..core.errors import CliError, classify_exception, classify_write_exception
+from ..core.io import resolve_body
 from ..core.output import OutputFormatter
+from ..core.query import take_page
 from ..core.serializers import serialize_email_summary
 from ..core.validation import MAX_RESULTS, require_confirmation
 
 
 def get_connection(ctx):
-    config_path = ctx.obj.get("config_path")
-    account_email = ctx.obj.get("account_email")
-    config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
-    return ConnectionManager(config_manager).get_account(account_email)
+    return get_account(ctx)
 
 
-def _build_draft(account, **kwargs):
-    if isinstance(account, Account):
-        return Message(account=account, **kwargs)
-
-    class _StubDraft:
-        def __init__(self, **data):
-            self.id = "stub-draft"
-            self.subject = data.get("subject")
-
-        def save(self):
-            return None
-
-    return _StubDraft(**kwargs)
+def _attach_files(message, attachments) -> None:
+    for path in attachments:
+        with open(path, "rb") as handle:
+            content = handle.read()
+        message.attach(FileAttachment(name=path.name, content=content))
 
 
 @click.group("draft")
@@ -47,9 +39,9 @@ def draft_list(ctx, limit):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
-        items = account.drafts.all().order_by("-datetime_received")[:limit]
-        results = [serialize_email_summary(item) for item in items]
-        formatter.success(results, count=len(results))
+        page, truncated = take_page(account.drafts.all().order_by("-datetime_received"), limit)
+        results = [serialize_email_summary(item) for item in page]
+        formatter.success(results, count=len(results), truncated=truncated)
     except Exception as exc:
         raise classify_exception(exc) from exc
 
@@ -58,26 +50,41 @@ def draft_list(ctx, limit):
 @click.option("--to", "to_addrs", multiple=True, help="Recipient email(s)")
 @click.option("--cc", "cc_addrs", multiple=True, help="CC email(s)")
 @click.option("--subject", required=True, help="Subject")
-@click.option("--body", required=True, help="Body text")
+@click.option("--body", default=None, help="Body text")
+@click.option(
+    "--body-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="Read body from file",
+)
 @click.option("--body-type", default="text", type=click.Choice(["text", "html"]), help="Body type")
+@click.option(
+    "--attach",
+    "attachments",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="Attach file(s)",
+)
 @click.pass_context
-def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_type):
+def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_file, body_type, attachments):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    body = resolve_body(body, body_file)
     try:
         account = get_connection(ctx)
         message_body = HTMLBody(body) if body_type == "html" else body
-        message = _build_draft(
-            account,
+        message = Message(
+            account=account,
             folder=account.drafts,
             subject=subject,
             body=message_body,
             to_recipients=[Mailbox(email_address=addr) for addr in to_addrs],
             cc_recipients=[Mailbox(email_address=addr) for addr in cc_addrs],
         )
+        _attach_files(message, attachments)
         message.save()
-        formatter.success({"message": "Draft created", "id": message.id, "subject": subject})
+        formatter.success({"message": "Draft created", "id": message.id, "subject": subject, "outcome": "succeeded"})
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc
 
 
 @draft.command("send")
@@ -91,11 +98,11 @@ def draft_send(ctx, draft_id, confirm):
         account = get_connection(ctx)
         message = account.drafts.get(id=draft_id)
         message.send()
-        formatter.success({"message": "Draft sent", "id": draft_id})
+        formatter.success({"message": "Draft sent", "id": draft_id, "outcome": "succeeded"})
     except ErrorItemNotFound as exc:
         raise CliError(f"Draft not found: {draft_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc
 
 
 @draft.command("delete")
@@ -109,8 +116,8 @@ def draft_delete(ctx, draft_id, confirm):
         account = get_connection(ctx)
         message = account.drafts.get(id=draft_id)
         message.delete()
-        formatter.success({"message": "Draft deleted", "id": draft_id, "permanent": True})
+        formatter.success({"message": "Draft deleted", "id": draft_id, "permanent": True, "outcome": "succeeded"})
     except ErrorItemNotFound as exc:
         raise CliError(f"Draft not found: {draft_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc

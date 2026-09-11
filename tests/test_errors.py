@@ -9,7 +9,7 @@ from exchangelib.errors import (
     UnauthorizedError,
 )
 
-from exchange_cli.core.errors import CliError, classify_exception
+from exchange_cli.core.errors import CliError, classify_exception, classify_write_exception
 
 
 @pytest.mark.parametrize(
@@ -44,3 +44,36 @@ def test_classify_click_exception_as_invalid_input():
 
     assert error.code == "INVALID_INPUT"
     assert error.exit_code == 2
+
+
+@pytest.mark.parametrize(
+    "exception",
+    [
+        ErrorTimeoutExpired("timeout"),
+        TimeoutError("timeout"),
+        ErrorServerBusy("busy"),
+        TransportError("offline"),
+    ],
+)
+def test_write_timeout_and_transport_errors_are_unknown_and_not_retryable(exception):
+    error = classify_write_exception(exception)
+
+    assert error.code == "WRITE_OUTCOME_UNKNOWN"
+    assert error.retryable is False
+    assert error.outcome == "unknown"
+    assert error.details["advice"] == "Do not retry automatically. Reconcile with email list or calendar list."
+
+
+def test_write_auth_error_stays_failed_and_not_retryable():
+    error = classify_write_exception(UnauthorizedError("bad credentials"))
+
+    assert error.code == "AUTH_ERROR"
+    assert error.retryable is False
+    assert error.outcome == "failed"
+
+
+def test_write_unknown_error_serializes_outcome():
+    error = classify_write_exception(TimeoutError("timeout"))
+
+    assert error.to_dict()["outcome"] == "unknown"
+    assert error.to_dict()["retryable"] is False

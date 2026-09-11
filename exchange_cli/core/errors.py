@@ -16,6 +16,9 @@ from exchangelib.errors import (
     UnauthorizedError,
 )
 
+WRITE_UNKNOWN_CODES = {"TIMEOUT_ERROR", "SERVER_BUSY", "CONNECTION_ERROR"}
+WRITE_UNKNOWN_ADVICE = "Do not retry automatically. Reconcile with email list or calendar list."
+
 
 class CliError(Exception):
     """A safe, machine-readable error intended for CLI consumers."""
@@ -28,6 +31,7 @@ class CliError(Exception):
         exit_code: int = 1,
         retryable: bool = False,
         details: dict[str, Any] | None = None,
+        outcome: str | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -35,6 +39,7 @@ class CliError(Exception):
         self.exit_code = exit_code
         self.retryable = retryable
         self.details = details
+        self.outcome = outcome
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -43,6 +48,8 @@ class CliError(Exception):
             "code": self.code,
             "retryable": self.retryable,
         }
+        if self.outcome:
+            payload["outcome"] = self.outcome
         if self.details:
             payload["details"] = self.details
         return payload
@@ -70,3 +77,23 @@ def classify_exception(exc: Exception, *, default_code: str = "SERVER_ERROR") ->
     if isinstance(exc, (ValueError, TypeError)):
         return CliError(str(exc) or "Invalid input.", code="INVALID_INPUT", exit_code=2)
     return CliError(str(exc) or "Unexpected Exchange Server error.", code=default_code)
+
+
+def classify_write_exception(exc: Exception, *, default_code: str = "SERVER_ERROR") -> CliError:
+    """Classify a mutating Exchange call without inviting automatic retries."""
+
+    error = classify_exception(exc, default_code=default_code)
+    if error.code in WRITE_UNKNOWN_CODES:
+        details = dict(error.details or {})
+        details["advice"] = WRITE_UNKNOWN_ADVICE
+        return CliError(
+            "The write may have succeeded on the server, but the client did not receive a confirmed result.",
+            code="WRITE_OUTCOME_UNKNOWN",
+            exit_code=error.exit_code,
+            retryable=False,
+            details=details,
+            outcome="unknown",
+        )
+    error.outcome = "failed"
+    error.retryable = False
+    return error

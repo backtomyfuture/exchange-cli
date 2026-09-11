@@ -4,38 +4,19 @@ from datetime import datetime
 from decimal import Decimal
 
 import click
-from exchangelib import Account, EWSDate
+from exchangelib import EWSDate
 from exchangelib import Task as EWSTask
 from exchangelib.errors import ErrorItemNotFound
 
-from ..core.config import ConfigManager
-from ..core.connection import ConnectionManager
-from ..core.errors import CliError, classify_exception
+from ..core.cli import get_account
+from ..core.errors import CliError, classify_exception, classify_write_exception
 from ..core.output import OutputFormatter
-from ..core.serializers import serialize_task
-from ..core.validation import MAX_RESULTS, require_confirmation
+from ..core.task_service import list_tasks
+from ..core.validation import MAX_RESULTS, TASK_STATUSES, normalize_task_status, require_confirmation
 
 
 def get_connection(ctx):
-    config_path = ctx.obj.get("config_path")
-    account_email = ctx.obj.get("account_email")
-    config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
-    return ConnectionManager(config_manager).get_account(account_email)
-
-
-def _build_task(account, **kwargs):
-    if isinstance(account, Account):
-        return EWSTask(account=account, **kwargs)
-
-    class _StubTask:
-        def __init__(self, **data):
-            self.id = "stub-task"
-            self.subject = data.get("subject")
-
-        def save(self, **kwargs):
-            return None
-
-    return _StubTask(**kwargs)
+    return get_account(ctx)
 
 
 def _parse_due_date(value: str) -> EWSDate:
@@ -54,16 +35,14 @@ def task(ctx):
 
 @task.command("list")
 @click.option("--limit", default=50, type=click.IntRange(1, MAX_RESULTS), help="Max results")
-@click.option("--status", default=None, help="Filter by status")
+@click.option("--status", default=None, type=click.Choice(TASK_STATUSES, case_sensitive=False), help="Filter by status")
 @click.pass_context
 def task_list(ctx, limit, status):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
-        queryset = account.tasks.filter(status=status) if status else account.tasks.all()
-        items = queryset.order_by("-due_date")[:limit]
-        results = [serialize_task(item) for item in items]
-        formatter.success(results, count=len(results))
+        results, truncated = list_tasks(account, limit=limit, status=status)
+        formatter.success(results, count=len(results), truncated=truncated)
     except Exception as exc:
         raise classify_exception(exc) from exc
 
@@ -72,33 +51,38 @@ def task_list(ctx, limit, status):
 @click.option("--subject", required=True, help="Task subject")
 @click.option("--due", default=None, help="Due date (YYYY-MM-DD)")
 @click.option("--body", default="", help="Task body")
-@click.option("--status", default="NotStarted", help="Initial status")
+@click.option(
+    "--status",
+    default="NotStarted",
+    type=click.Choice(TASK_STATUSES, case_sensitive=False),
+    help="Initial status",
+)
 @click.pass_context
 def task_create(ctx, subject, due, body, status):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         due_date = _parse_due_date(due) if due else None
         account = get_connection(ctx)
-        task_obj = _build_task(
-            account,
+        task_obj = EWSTask(
+            account=account,
             folder=account.tasks,
             subject=subject,
             body=body,
-            status=status,
+            status=normalize_task_status(status),
         )
         if due_date:
             task_obj.due_date = due_date
         task_obj.save()
-        formatter.success({"message": "Task created", "id": task_obj.id, "subject": subject})
+        formatter.success({"message": "Task created", "id": task_obj.id, "subject": subject, "outcome": "succeeded"})
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc
 
 
 @task.command("update")
 @click.argument("task_id")
 @click.option("--subject", default=None, help="New subject")
 @click.option("--due", default=None, help="New due date (YYYY-MM-DD)")
-@click.option("--status", default=None, help="New status")
+@click.option("--status", default=None, type=click.Choice(TASK_STATUSES, case_sensitive=False), help="New status")
 @click.pass_context
 def task_update(ctx, task_id, subject, due, status):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
@@ -120,14 +104,14 @@ def task_update(ctx, task_id, subject, due, status):
             task_obj.due_date = due_date
             fields.append("due_date")
         if status is not None:
-            task_obj.status = status
+            task_obj.status = normalize_task_status(status)
             fields.append("status")
         task_obj.save(update_fields=fields)
-        formatter.success({"message": "Task updated", "id": task_id})
+        formatter.success({"message": "Task updated", "id": task_id, "outcome": "succeeded"})
     except ErrorItemNotFound as exc:
         raise CliError(f"Task not found: {task_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc
 
 
 @task.command("complete")
@@ -141,11 +125,11 @@ def task_complete(ctx, task_id):
         task_obj.status = "Completed"
         task_obj.percent_complete = Decimal(100)
         task_obj.save(update_fields=["status", "percent_complete"])
-        formatter.success({"message": "Task completed", "id": task_id})
+        formatter.success({"message": "Task completed", "id": task_id, "outcome": "succeeded"})
     except ErrorItemNotFound as exc:
         raise CliError(f"Task not found: {task_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc
 
 
 @task.command("delete")
@@ -159,8 +143,8 @@ def task_delete(ctx, task_id, confirm):
         account = get_connection(ctx)
         task_obj = account.tasks.get(id=task_id)
         task_obj.delete()
-        formatter.success({"message": "Task deleted", "id": task_id, "permanent": True})
+        formatter.success({"message": "Task deleted", "id": task_id, "permanent": True, "outcome": "succeeded"})
     except ErrorItemNotFound as exc:
         raise CliError(f"Task not found: {task_id}", code="NOT_FOUND") from exc
     except Exception as exc:
-        raise classify_exception(exc) from exc
+        raise classify_write_exception(exc) from exc

@@ -11,30 +11,51 @@
 - 覆盖邮件、草稿、文件夹、日历、任务、联系人
 - 邮件列表默认直连，实时监听在当前 CLI 前台运行
 - 支持配置文件加密存储密码
-- 同时规划 `pip` 与 `npm` 分发
+- 当前正式分发入口是 npm 平台二进制；Python 源码安装适用于开发者
 
 ## 快速开始
 
+已有 Node 的同事优先使用已发布的 npm 包：
+
 ```bash
-pip install exchange-cli
+npm install -g @backtomyfuture/exchange-cli
 exchange-cli config init
 exchange-cli doctor
 exchange-cli email list
 ```
 
-## 安装
-
-### pip
+没有 Node、但有 Python 3.10+ 的开发者可以从源码安装：
 
 ```bash
-pip install exchange-cli
+pipx install .
+# 或: uv tool install .
+exchange-cli config init
 ```
 
-### npm
+当前 PyPI 没有 `exchange-cli` 包，不要使用 `pip install exchange-cli`。
+
+## 安装
+
+### npm（推荐）
 
 ```bash
 npm install -g @backtomyfuture/exchange-cli
 ```
+
+安装后会拉取当前平台的二进制包。首次启动在 macOS 上可能需要十几秒。
+
+### 从源码安装（开发者）
+
+```bash
+pipx install .
+# 或: pip install -e ".[dev]"
+```
+
+发布 Python 包前，wheel 只包含 `exchange_cli*`，不打包 `tests`、`docs`、`npm` 或工作区目录。
+
+### 独立二进制
+
+CI 为 darwin/linux/windows 的 arm64 与 x64 构建平台包。没有 Node 的同事可以解压对应平台目录中的 `bin/exchange-cli` 直接运行。
 
 ## 常用命令
 
@@ -42,21 +63,24 @@ npm install -g @backtomyfuture/exchange-cli
 |------|--------|
 | `config` | `init`, `show` |
 | 诊断 | `doctor`（`--offline` 跳过 EWS 连接探针） |
-| `email` | `list`, `read`, `send`, `reply`, `forward`, `search` |
+| `schema` | 机器可读命令契约 |
+| `email` | `list`, `read`, `send`, `reply`, `forward`, `search`, `mark-read`, `mark-unread`, `move`, `delete`, `watch` |
 | `draft` | `list`, `create`, `send`, `delete` |
 | `folder` | `list`, `tree` |
 | `calendar` | `list`, `create`, `update`, `delete` |
 | `task` | `list`, `create`, `update`, `complete`, `delete` |
-| `contact` | `list`, `search` |
+| `contact` | `list`, `search`, `resolve` |
 
 ## 示例
 
 ```bash
 exchange-cli doctor
 exchange-cli doctor --offline
+exchange-cli schema email.send
 exchange-cli email list --limit 10
-exchange-cli email read AAMk123
+exchange-cli email read AAMk123 --fields id,subject,body
 exchange-cli email send --to "a@x.com" --subject "Hi" --body "Hello" --confirm
+exchange-cli contact resolve "张三"
 exchange-cli calendar list --start "2024-07-01" --end "2024-07-31"
 exchange-cli task create --subject "Review PR" --due "2024-07-20"
 exchange-cli contact search "John"
@@ -67,7 +91,7 @@ exchange-cli contact search "John"
 默认输出 JSON：
 
 ```json
-{"ok": true, "count": 2, "data": [...]}
+{"ok": true, "count": 2, "truncated": false, "data": [...]}
 ```
 
 错误输出：
@@ -76,9 +100,23 @@ exchange-cli contact search "John"
 {"ok": false, "error": "Connection failed", "code": "CONNECTION_ERROR", "retryable": true}
 ```
 
-发送邮件、回复、转发，以及永久删除草稿、日历事件或任务时，命令必须带 `--confirm`。带参会人的日历创建也必须带 `--confirm`，因为会向参会人发送邀请。
+写操作在超时、连接中断或服务器繁忙时返回：
 
-列表与搜索的 `--limit` 范围为 `1..200`；只接受 `inbox`、`sent`、`drafts`、`trash`、`junk` 五个内置邮件文件夹。附件保存使用排他写入，不覆盖同名文件，也拒绝附件名中的路径穿越。
+```json
+{"ok": false, "error": "...", "code": "WRITE_OUTCOME_UNKNOWN", "retryable": false, "outcome": "unknown"}
+```
+
+这时不要自动重试，先用 `email list`、`calendar list` 或 `task list` 对账。
+
+发送邮件、回复、转发，以及永久删除邮件、草稿、日历事件或任务时，命令必须带 `--confirm`。带参会人且会发邀请的日历创建，以及 `--notify all` 的会议更新，也必须带 `--confirm`。
+
+列表与搜索的 `--limit` 范围为 `1..200`。`--folder` 接受 `inbox`、`sent`、`drafts`、`trash`、`junk`，也可以是文件夹路径或文件夹 ID。`email delete` 默认移入回收站；只有 `--permanent` 才会永久删除。附件保存使用排他写入，不覆盖同名文件，也拒绝附件名中的路径穿越。
+
+`email read --fields id,subject,body` 可以省略原始 HTML。`contact resolve` 查询公司通讯录，不是个人联系人文件夹。
+
+`task list --status` 在客户端筛选，因为 EWS 不能按 `status` 字段过滤。结果可能带 `truncated: true`，表示扫描上限内还有未返回的匹配项。
+
+日历 `--notify none|all` 控制是否通知参会人。默认创建无参会人日程不发邀请；有参会人时默认 `all`。更新和删除默认 `none`，避免把“自己日历改成功”当成“会议已通知所有人”。
 
 可使用以下环境变量覆盖配置文件：
 
@@ -96,9 +134,13 @@ exchange-cli contact search "John"
 
 `exchange-cli doctor` 会检查有效配置、TLS 证书校验设置，并通过刷新 EWS 根目录验证认证和最小只读访问；它不会读取邮件或写入 Exchange。加 `--offline` 时仅跳过这项 EWS 远端探针。检查失败会返回非零退出码，同时在 JSON 的 `data.checks` 中保留各检查项和修复建议。
 
-`EXCHANGE_NO_VERIFY_SSL=1` 会关闭 TLS 证书校验，只应在已确认风险的受控内网中临时使用，否则可能遭受中间人攻击。Fernet 密钥与密文都保存在同一台机器，只能降低配置文件被单独复制或误读的风险，不能防御同一系统账号已经失陷的情况。
+`EXCHANGE_NO_VERIFY_SSL=1` 会关闭 TLS 证书校验，只应在已确认风险的受控内网中临时使用，否则可能遭受中间人攻击。企业环境应优先配置企业 CA，而不是把关闭校验当成默认模板。Fernet 密钥与密文都保存在同一台机器，只能降低配置文件被单独复制或误读的风险，不能防御同一系统账号已经失陷的情况。
 
-`email list` 和 `email watch` 都在当前 CLI 进程中直接连接本地 Exchange，不启动后台进程。
+`email list` 和 `email watch` 都在当前 CLI 进程中直接连接本地 Exchange，不启动后台进程。`email watch` 的新邮件事件只包含 item id；需要正文时再调用 `email read`。可用 `--duration` 和 `--max-events` 限制运行时间。认证失败会停止监听，不会无限重连。
+
+调用时使用参数数组，不要把不可信邮件内容拼进 shell。检查退出码；非零即失败。限制运行时间，尤其是 `email watch`。
+
+Skill 位于仓库 `skills/SKILL.md`，当前 npm 包不包含它。把该文件复制到 agent 的 skill 目录即可。
 
 默认测试不访问真实邮箱。需要在已配置的本地 Exchange 上做只读冒烟时，显式运行：
 
@@ -117,6 +159,7 @@ EXCHANGE_LIVE_TEST=1 pytest -m live_exchange -q
 - 六个平台全部构建、执行 `--version` 冒烟并完成 `npm pack` 后，才进入唯一发布任务
 - 唯一发布任务顺序发布六个平台包，最后发布主包；npm 不支持事务，失败时仍需人工核对 registry
 - 发布后验证：`npm view @backtomyfuture/exchange-cli version` 与 `npm i -g @backtomyfuture/exchange-cli@<version>`
+- 比较实际二进制 `--version`，不要只检查包元数据
 
 ## License
 

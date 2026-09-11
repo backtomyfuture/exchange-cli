@@ -27,6 +27,7 @@ HIDDEN_IMPORTS = [
     "exchange_cli.commands.draft",
     "exchange_cli.commands.email",
     "exchange_cli.commands.folder",
+    "exchange_cli.commands.schema",
     "exchange_cli.commands.task",
     "markdownify",
     "bs4",

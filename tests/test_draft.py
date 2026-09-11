@@ -32,13 +32,18 @@ class TestDraftList:
 
 class TestDraftCreate:
     def test_create(self, runner, mock_conn):
-        result = runner.invoke(
-            cli,
-            ["draft", "create", "--to", "a@x.com", "--subject", "Draft", "--body", "WIP"],
-        )
+        with patch("exchange_cli.commands.draft.Message") as message_cls:
+            message = MagicMock()
+            message.id = "D1"
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                ["draft", "create", "--to", "a@x.com", "--subject", "Draft", "--body", "WIP"],
+            )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        message.save.assert_called_once()
 
 
 class TestDraftSend:

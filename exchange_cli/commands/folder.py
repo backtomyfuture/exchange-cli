@@ -2,18 +2,14 @@
 
 import click
 
-from ..core.config import ConfigManager
-from ..core.connection import ConnectionManager
+from ..core.cli import get_account
 from ..core.errors import classify_exception
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_folder
 
 
 def get_connection(ctx):
-    config_path = ctx.obj.get("config_path")
-    account_email = ctx.obj.get("account_email")
-    config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
-    return ConnectionManager(config_manager).get_account(account_email)
+    return get_account(ctx)
 
 
 def _walk_tree(folder, depth=0):

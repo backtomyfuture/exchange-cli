@@ -37,13 +37,28 @@ class TestCalendarList:
 
 class TestCalendarCreate:
     def test_create_event(self, runner, mock_conn):
-        result = runner.invoke(
-            cli,
-            ["calendar", "create", "--subject", "Meeting", "--start", "2024-07-15 10:00", "--end", "2024-07-15 11:00"],
-        )
+        with patch("exchange_cli.commands.calendar.CalendarItem") as event_cls:
+            event = MagicMock()
+            event.id = "E1"
+            event_cls.return_value = event
+            result = runner.invoke(
+                cli,
+                [
+                    "calendar",
+                    "create",
+                    "--subject",
+                    "Meeting",
+                    "--start",
+                    "2024-07-15 10:00",
+                    "--end",
+                    "2024-07-15 11:00",
+                ],
+            )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        event.save.assert_called_once()
+        assert event.save.call_args.kwargs["send_meeting_invitations"] == "SendToNone"
 
     def test_create_with_attendees_requires_confirmation_before_connection(self, runner):
         with patch("exchange_cli.commands.calendar.get_connection") as get_connection:
@@ -106,6 +121,15 @@ class TestCalendarDelete:
         result = runner.invoke(cli, ["calendar", "delete", "E1", "--confirm"])
         assert result.exit_code == 0
         assert json.loads(result.output)["data"]["permanent"] is True
+        event.delete.assert_called_once()
+        assert event.delete.call_args.kwargs["send_meeting_cancellations"] == "SendToNone"
+
+    def test_update_with_notify_requires_confirmation_before_connection(self, runner):
+        with patch("exchange_cli.commands.calendar.get_connection") as get_connection:
+            result = runner.invoke(cli, ["calendar", "update", "E1", "--subject", "New", "--notify", "all"])
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
 
     def test_delete_requires_confirmation_before_connection(self, runner):
         with patch("exchange_cli.commands.calendar.get_connection") as get_connection:

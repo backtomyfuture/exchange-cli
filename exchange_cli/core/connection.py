@@ -61,7 +61,7 @@ def create_account(credentials_dict: dict[str, Any]) -> Account:
             credentials=credentials,
             auth_type=auth_type,
             retry_policy=FailFast(),
-            max_connections=1,
+            max_connections=2,
         )
         return Account(
             primary_smtp_address=credentials_dict["email"],

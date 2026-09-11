@@ -16,7 +16,13 @@ from .connection import ConnectionManager
 from .email_service import resolve_mail_folder
 from .errors import classify_exception
 from .serializers import serialize_email_summary
-from .validation import MAX_BACKFILL_MINUTES, normalize_folder, validate_bounded_int
+from .validation import (
+    MAX_BACKFILL_MINUTES,
+    MAX_WATCH_DURATION_SECONDS,
+    MAX_WATCH_EVENTS,
+    normalize_folder,
+    validate_bounded_int,
+)
 
 MAX_EVENT_BUFFER = 5000
 
@@ -139,7 +145,7 @@ class FolderWatcher(threading.Thread):
                 }
             )
 
-    def _emit_notification_events(self, notification, folder) -> None:
+    def _emit_notification_events(self, notification) -> None:
         events = getattr(notification, "events", None) or []
         for event in events:
             event_type = _camel_to_snake(event.__class__.__name__.removesuffix("Event"))
@@ -164,11 +170,7 @@ class FolderWatcher(threading.Thread):
                 "item": item_info,
             }
             if event_type in {"new_mail", "created"} and item_info.get("id"):
-                try:
-                    message = folder.get(id=item_info["id"])
-                    payload["message"] = serialize_email_summary(message, include_body_preview=False)
-                except Exception:
-                    payload["message"] = {"id": item_info.get("id")}
+                payload["message"] = {"id": item_info.get("id"), "changekey": item_info.get("changekey")}
             self.publish(payload)
 
     def _run_streaming_once(self, folder) -> None:
@@ -193,7 +195,7 @@ class FolderWatcher(threading.Thread):
                 ):
                     if self._stop_event.is_set():
                         return
-                    self._emit_notification_events(notification, folder)
+                    self._emit_notification_events(notification)
         finally:
             try:
                 folder.unsubscribe(subscription_id)
@@ -211,6 +213,10 @@ class FolderWatcher(threading.Thread):
             except Exception as exc:
                 error = classify_exception(exc)
                 self._emit_status("streaming_error", error.message, error.code)
+                if error.code in {"AUTH_ERROR", "PERMISSION_ERROR", "CONFIG_NOT_FOUND", "CONFIG_INVALID"}:
+                    self._emit_gap("fatal_error", detail=error.message, code=error.code)
+                    self._stop_event.set()
+                    return
                 candidate_cutoff = datetime.now(timezone.utc) - timedelta(
                     minutes=self.backfill_minutes
                 )
@@ -259,6 +265,9 @@ def foreground_watch_events(
     account_email: str | None,
     folder_name: str,
     backfill_minutes: int,
+    *,
+    duration_seconds: int | None = None,
+    max_events: int | None = None,
 ):
     """Yield watch events in the calling CLI process."""
 
@@ -271,6 +280,20 @@ def foreground_watch_events(
         minimum=1,
         maximum=MAX_BACKFILL_MINUTES,
     )
+    if duration_seconds is not None:
+        duration_seconds = validate_bounded_int(
+            duration_seconds,
+            field="duration_seconds",
+            minimum=1,
+            maximum=MAX_WATCH_DURATION_SECONDS,
+        )
+    if max_events is not None:
+        max_events = validate_bounded_int(
+            max_events,
+            field="max_events",
+            minimum=1,
+            maximum=MAX_WATCH_EVENTS,
+        )
     subscriber: queue.Queue = queue.Queue(maxsize=1024)
     watcher = FolderWatcher(
         config_dir=config_manager.config_dir,
@@ -285,10 +308,30 @@ def foreground_watch_events(
         ),
     )
     watcher.start()
+    started = datetime.now(timezone.utc)
+    emitted = 0
     try:
         while True:
+            if duration_seconds is not None:
+                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                if elapsed >= duration_seconds:
+                    yield {
+                        "event_type": "watcher_status",
+                        "status": "stopped",
+                        "detail": "duration_elapsed",
+                        "timestamp": iso_now(),
+                        "folder": folder_name,
+                        "account": account_email,
+                    }
+                    return
+            timeout = 15
+            if duration_seconds is not None:
+                remaining = duration_seconds - (datetime.now(timezone.utc) - started).total_seconds()
+                if remaining <= 0:
+                    continue
+                timeout = min(timeout, remaining)
             try:
-                yield subscriber.get(timeout=15)
+                event = subscriber.get(timeout=timeout)
             except queue.Empty:
                 yield {
                     "event_type": "heartbeat",
@@ -296,6 +339,20 @@ def foreground_watch_events(
                     "folder": folder_name,
                     "account": account_email,
                 }
+                continue
+            yield event
+            if event.get("event_type") not in {"heartbeat", "watcher_status", "watcher_gap"}:
+                emitted += 1
+                if max_events is not None and emitted >= max_events:
+                    yield {
+                        "event_type": "watcher_status",
+                        "status": "stopped",
+                        "detail": "max_events",
+                        "timestamp": iso_now(),
+                        "folder": folder_name,
+                        "account": account_email,
+                    }
+                    return
     finally:
         watcher.stop()
         watcher.join(timeout=2)

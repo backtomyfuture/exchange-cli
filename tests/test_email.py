@@ -10,6 +10,7 @@ from exchangelib.errors import DoesNotExist, TransportError
 from exchangelib.properties import ConversationId
 
 from exchange_cli.commands.email import _find_message, _parse_search_date
+from exchange_cli.core.errors import CliError
 from exchange_cli.main import cli
 
 
@@ -55,26 +56,33 @@ def mock_conn():
 class TestEmailList:
     def test_list_inbox(self, runner, mock_conn):
         messages = [_mock_message("M1", "Subject 1"), _mock_message("M2", "Subject 2")]
-        mock_conn.inbox.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=messages)
+        mock_conn.inbox.all.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=messages
+        )
         result = runner.invoke(cli, ["email", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
         assert data["count"] == 2
+        assert data["truncated"] is False
 
     def test_list_with_folder(self, runner, mock_conn):
-        mock_conn.sent.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[])
+        mock_conn.sent.all.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[])
         result = runner.invoke(cli, ["email", "list", "--folder", "sent"])
         assert result.exit_code == 0
 
     def test_list_unread(self, runner, mock_conn):
-        mock_conn.inbox.filter.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[])
+        mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[]
+        )
         result = runner.invoke(cli, ["email", "list", "--unread"])
         assert result.exit_code == 0
 
     def test_list_defaults_to_without_preview(self, runner, mock_conn):
         message = _mock_message("M1", "Subject 1")
-        mock_conn.inbox.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[message])
+        mock_conn.inbox.all.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[message]
+        )
         result = runner.invoke(cli, ["email", "list"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
@@ -82,18 +90,20 @@ class TestEmailList:
 
     def test_list_with_preview_flag(self, runner, mock_conn):
         message = _mock_message("M1", "Subject 1")
-        mock_conn.inbox.all.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[message])
+        mock_conn.inbox.all.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[message]
+        )
         result = runner.invoke(cli, ["email", "list", "--with-preview"])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["data"][0]["body_preview"] == "Preview"
 
-    def test_list_rejects_unknown_folder_before_connection(self, runner):
+    def test_list_rejects_empty_folder_before_connection(self, runner):
         with patch("exchange_cli.commands.email.get_connection") as get_connection:
-            result = runner.invoke(cli, ["email", "list", "--folder", "unknown"])
+            result = runner.invoke(cli, ["email", "list", "--folder", "   "])
 
         assert result.exit_code == 2
-        assert json.loads(result.output)["code"] == "INVALID_INPUT"
+        assert json.loads(result.output)["code"] == "INVALID_FOLDER"
         get_connection.assert_not_called()
 
     def test_list_rejects_excessive_limit_before_connection(self, runner):
@@ -122,7 +132,7 @@ class TestEmailRead:
     def test_read_message_default_markdown(self, runner, mock_conn):
         message = _mock_message()
         message.body = "<html><body><p>Hello <b>World</b></p></body></html>"
-        with patch("exchange_cli.commands.email._find_message", return_value=message):
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
             result = runner.invoke(cli, ["email", "read", "AAMk123"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -133,7 +143,7 @@ class TestEmailRead:
     def test_read_message_html_format(self, runner, mock_conn):
         message = _mock_message()
         message.body = "<html><body><p>Hello</p></body></html>"
-        with patch("exchange_cli.commands.email._find_message", return_value=message):
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
             result = runner.invoke(cli, ["email", "read", "AAMk123", "--body-format", "html"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -147,7 +157,7 @@ class TestEmailRead:
         message.conversation_id = ConversationId(id="AAQkAGconversation", changekey="CK1")
         message.message_id = "<reply-42@example.com>"
 
-        with patch("exchange_cli.commands.email._find_message", return_value=message):
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
             result = runner.invoke(cli, ["email", "read", "AAMk123"])
 
         assert result.exit_code == 0
@@ -158,7 +168,8 @@ class TestEmailRead:
         assert data["internet_message_id"] == "<reply-42@example.com>"
 
     def test_read_not_found(self, runner, mock_conn):
-        with patch("exchange_cli.commands.email._find_message", return_value=None):
+        missing = CliError("Message not found: NONEXISTENT", code="NOT_FOUND")
+        with patch("exchange_cli.commands.email.require_message", side_effect=missing):
             result = runner.invoke(cli, ["email", "read", "NONEXISTENT"])
         assert result.exit_code != 0
         data = json.loads(result.output)
@@ -170,7 +181,7 @@ class TestEmailRead:
         message.attachments = [FileAttachment(name="report.txt", content=b"report")]
         destination = tmp_path / "downloads"
 
-        with patch("exchange_cli.commands.email._find_message", return_value=message):
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
             result = runner.invoke(
                 cli,
                 ["email", "read", "AAMk123", "--save-attachments", str(destination)],
@@ -184,23 +195,28 @@ class TestEmailRead:
 
 class TestEmailSend:
     def test_send_basic(self, runner, mock_conn):
-        result = runner.invoke(
-            cli,
-            [
-                "email",
-                "send",
-                "--to",
-                "a@x.com",
-                "--subject",
-                "Hi",
-                "--body",
-                "Hello",
-                "--confirm",
-            ],
-        )
+        with patch("exchange_cli.commands.email.Message") as message_cls:
+            message = MagicMock()
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "send",
+                    "--to",
+                    "a@x.com",
+                    "--subject",
+                    "Hi",
+                    "--body",
+                    "Hello",
+                    "--confirm",
+                ],
+            )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        assert data["data"]["outcome"] == "succeeded"
+        message.send_and_save.assert_called_once()
 
     def test_send_requires_confirmation_before_connection(self, runner):
         with patch("exchange_cli.commands.email.get_connection") as get_connection:
@@ -230,10 +246,81 @@ class TestEmailSend:
         assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
         get_connection.assert_not_called()
 
+    def test_send_timeout_is_unknown_outcome(self, runner, mock_conn):
+        with patch("exchange_cli.commands.email.Message") as message_cls:
+            message = MagicMock()
+            message.send_and_save.side_effect = TransportError("offline")
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "send",
+                    "--to",
+                    "a@x.com",
+                    "--subject",
+                    "Hi",
+                    "--body",
+                    "Hello",
+                    "--confirm",
+                ],
+            )
+
+        payload = json.loads(result.output)
+        assert result.exit_code == 1
+        assert payload["code"] == "WRITE_OUTCOME_UNKNOWN"
+        assert payload["retryable"] is False
+        assert payload["outcome"] == "unknown"
+
+    def test_mark_read(self, runner, mock_conn):
+        message = _mock_message()
+        mock_conn.inbox.get.return_value = message
+        result = runner.invoke(cli, ["email", "mark-read", "AAMk123"])
+        assert result.exit_code == 0
+        assert json.loads(result.output)["data"]["is_read"] is True
+        message.save.assert_called_once()
+
+    def test_move(self, runner, mock_conn):
+        message = _mock_message()
+        mock_conn.inbox.get.return_value = message
+        mock_conn.trash.name = "Deleted Items"
+        result = runner.invoke(cli, ["email", "move", "AAMk123", "--folder", "trash"])
+        assert result.exit_code == 0
+        message.move.assert_called_once_with(mock_conn.trash)
+
+    def test_delete_moves_to_trash_by_default(self, runner, mock_conn):
+        message = _mock_message()
+        mock_conn.inbox.get.return_value = message
+        result = runner.invoke(cli, ["email", "delete", "AAMk123", "--confirm"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"]["permanent"] is False
+        message.move_to_trash.assert_called_once()
+        message.delete.assert_not_called()
+
+    def test_delete_requires_confirmation_before_connection(self, runner):
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(cli, ["email", "delete", "AAMk123"])
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
+
+    def test_read_fields_omits_html(self, runner, mock_conn):
+        message = _mock_message()
+        message.body = "<html><body><p>Hello</p></body></html>"
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "read", "AAMk123", "--fields", "id,subject,body"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)["data"]
+        assert set(data) == {"id", "subject", "body"}
+        assert "body_html" not in data
+
 
 class TestEmailSearch:
     def test_search_basic(self, runner, mock_conn):
-        mock_conn.inbox.filter.return_value.order_by.return_value.__getitem__ = MagicMock(return_value=[])
+        mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[]
+        )
         result = runner.invoke(cli, ["email", "search", "quarterly report"])
         assert result.exit_code == 0
 

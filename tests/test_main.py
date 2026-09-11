@@ -72,3 +72,25 @@ def test_help_exposes_no_daemon_command(runner):
 
     assert result.exit_code == 0
     assert "\n  daemon" not in result.output
+    assert "\n  schema" in result.output
+
+
+def test_schema_lists_commands(runner):
+    result = runner.invoke(cli, ["schema"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    names = {item["name"] for item in payload["data"]["commands"]}
+    assert "email.send" in names
+    assert "contact.resolve" in names
+    assert payload["data"]["schema_version"] == 1
+
+
+def test_schema_single_command(runner):
+    result = runner.invoke(cli, ["schema", "email.send"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)["data"]
+    assert payload["name"] == "email.send"
+    assert payload["write"] is True
+    assert payload["confirm"] is True

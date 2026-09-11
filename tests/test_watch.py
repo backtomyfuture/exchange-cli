@@ -118,6 +118,32 @@ def test_reconnect_subscribes_before_backfill(tmp_path, monkeypatch):
     assert watcher._backfill_cutoff is None
 
 
+def test_new_mail_event_does_not_fetch_item_details(tmp_path):
+    published = []
+    watcher = _watcher(tmp_path, published)
+
+    class Event:
+        def __init__(self):
+            self.item_id = SimpleNamespace(id="M1", changekey="CK1")
+            self.timestamp = None
+            self.watermark = "W1"
+
+    event = Event()
+    notification = SimpleNamespace(
+        events=[
+            type(
+                "NewMailEvent",
+                (),
+                {"item_id": event.item_id, "timestamp": None, "watermark": "W1"},
+            )()
+        ]
+    )
+    watcher._emit_notification_events(notification)
+    event = published[0]
+    assert event["event_type"] == "new_mail"
+    assert event["message"] == {"id": "M1", "changekey": "CK1"}
+
+
 def test_backfill_failure_emits_gap_and_exits_subscription_for_retry(tmp_path, monkeypatch):
     published = []
     watcher = _watcher(tmp_path, published)

@@ -28,7 +28,7 @@ class TestConnectionManager:
         assert mock_account.call_args.kwargs["primary_smtp_address"] == "test@example.com"
         assert mock_account.call_args.kwargs["autodiscover"] is False
         assert isinstance(mock_config.call_args.kwargs["retry_policy"], FailFast)
-        assert mock_config.call_args.kwargs["max_connections"] == 1
+        assert mock_config.call_args.kwargs["max_connections"] == 2
         assert BaseProtocol.TIMEOUT == 30
         assert account is mock_account.return_value
 

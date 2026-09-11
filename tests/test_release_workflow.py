@@ -1,6 +1,13 @@
 from pathlib import Path
 
 
+def test_python_package_discovery_is_limited_to_exchange_cli():
+    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'include = ["exchange_cli*"]' in pyproject
+    assert 'where = ["."]' not in pyproject
+
+
 def test_cryptography_range_preserves_legacy_release_platforms():
     pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
 
@@ -38,6 +45,7 @@ def test_platform_build_includes_every_lazy_loaded_command():
     )
 
     assert '"exchange_cli.commands.doctor"' in builder
+    assert '"exchange_cli.commands.schema"' in builder
 
 
 def test_publish_job_uses_integrity_checked_idempotent_script_for_every_package():

@@ -15,12 +15,14 @@ class OutputFormatter:
     def __init__(self, fmt: str = "json"):
         self.fmt = fmt
 
-    def success(self, data, count: int | None = None, file=None):
+    def success(self, data, count: int | None = None, truncated: bool | None = None, file=None):
         handle = file or sys.stdout
         if self.fmt == "json":
             payload = {"ok": True, "data": data}
             if count is not None:
                 payload["count"] = count
+            if truncated is not None:
+                payload["truncated"] = truncated
             json.dump(payload, handle, ensure_ascii=False, default=_default_serializer)
             handle.write("\n")
             return
@@ -33,6 +35,7 @@ class OutputFormatter:
         *,
         retryable: bool | None = None,
         details: dict | None = None,
+        outcome: str | None = None,
         file=None,
     ):
         handle = file or sys.stdout
@@ -42,6 +45,8 @@ class OutputFormatter:
                 payload["code"] = code
             if retryable is not None:
                 payload["retryable"] = retryable
+            if outcome:
+                payload["outcome"] = outcome
             if details:
                 payload["details"] = details
             json.dump(payload, handle, ensure_ascii=False)

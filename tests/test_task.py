@@ -28,12 +28,46 @@ class TestTaskList:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        assert data["truncated"] is False
+
+    def test_list_status_filters_client_side_without_server_filter(self, runner, mock_conn):
+        matching = MagicMock(status="NotStarted")
+        matching.id = "T1"
+        matching.subject = "Open"
+        matching.due_date = None
+        matching.start_date = None
+        matching.complete_date = None
+        matching.percent_complete = 0
+        matching.importance = "Normal"
+        matching.text_body = ""
+        other = MagicMock(status="Completed")
+        other.id = "T2"
+        other.subject = "Done"
+        other.due_date = None
+        other.start_date = None
+        other.complete_date = None
+        other.percent_complete = 100
+        other.importance = "Normal"
+        other.text_body = ""
+        mock_conn.tasks.all.return_value.order_by.return_value.__iter__ = lambda self: iter([matching, other])
+        mock_conn.tasks.filter.side_effect = AssertionError("status must not be server-filtered")
+        result = runner.invoke(cli, ["task", "list", "--status", "NotStarted"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["count"] == 1
+        assert payload["data"][0]["id"] == "T1"
+        mock_conn.tasks.filter.assert_not_called()
 
 
 class TestTaskCreate:
     def test_create(self, runner, mock_conn):
-        result = runner.invoke(cli, ["task", "create", "--subject", "Review PR"])
+        with patch("exchange_cli.commands.task.EWSTask") as task_cls:
+            task_obj = MagicMock()
+            task_obj.id = "T1"
+            task_cls.return_value = task_obj
+            result = runner.invoke(cli, ["task", "create", "--subject", "Review PR"])
         assert result.exit_code == 0
+        task_obj.save.assert_called_once()
 
     def test_create_rejects_invalid_due_date_before_connection(self, runner):
         with patch("exchange_cli.commands.task.get_connection") as get_connection:

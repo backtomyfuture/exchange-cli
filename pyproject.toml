@@ -51,7 +51,7 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+include = ["exchange_cli*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "exchange_cli.__version__"}

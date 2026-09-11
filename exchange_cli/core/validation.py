@@ -12,7 +12,37 @@ from .errors import CliError
 
 FOLDER_NAMES = ("inbox", "sent", "drafts", "trash", "junk")
 MAX_RESULTS = 200
+MAX_SCAN = 2000
 MAX_BACKFILL_MINUTES = 1440
+MAX_WATCH_DURATION_SECONDS = 86400
+MAX_WATCH_EVENTS = 10000
+TASK_STATUSES = ("NotStarted", "InProgress", "Completed", "WaitingOnOthers", "Deferred")
+EMAIL_DETAIL_FIELD_CHOICES = (
+    "id",
+    "subject",
+    "sender",
+    "to",
+    "cc",
+    "bcc",
+    "datetime_received",
+    "datetime_sent",
+    "is_read",
+    "has_attachments",
+    "importance",
+    "body_preview",
+    "body",
+    "body_format",
+    "body_html",
+    "unique_body_html",
+    "conversation_id",
+    "internet_message_id",
+    "attachments",
+)
+MEETING_NOTIFY_CHOICES = ("none", "all")
+MEETING_NOTIFY_MAP = {
+    "none": "SendToNone",
+    "all": "SendToAllAndSaveCopy",
+}
 
 
 def normalize_folder(value: Any) -> str:
@@ -69,6 +99,39 @@ def ensure_start_before_end(start: Any, end: Any, *, action: str) -> None:
             exit_code=2,
             details={"action": action},
         )
+
+
+def parse_field_list(value: str | None, *, allowed: tuple[str, ...]) -> list[str] | None:
+    if value is None:
+        return None
+    fields = [part.strip() for part in value.split(",") if part.strip()]
+    if not fields:
+        raise CliError("At least one field is required.", code="INVALID_INPUT", exit_code=2)
+    unknown = [field for field in fields if field not in allowed]
+    if unknown:
+        raise CliError(
+            f"Unsupported fields: {', '.join(unknown)}.",
+            code="INVALID_INPUT",
+            exit_code=2,
+            details={"allowed": list(allowed)},
+        )
+    return fields
+
+
+def normalize_task_status(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CliError("Invalid task status.", code="INVALID_INPUT", exit_code=2)
+    canonical = next((status for status in TASK_STATUSES if status.lower() == value.lower()), None)
+    if canonical is None:
+        raise CliError(
+            f"Unsupported task status: {value!r}.",
+            code="INVALID_INPUT",
+            exit_code=2,
+            details={"allowed": list(TASK_STATUSES)},
+        )
+    return canonical
 
 
 def require_confirmation(confirmed: bool, *, action: str) -> None:
