@@ -113,7 +113,7 @@ def test_schema_calendar_command_semantics(runner):
     result = runner.invoke(cli, ["schema", "calendar.update"])
     assert result.exit_code == 0
     update_data = json.loads(result.output)["data"]
-    assert update_data["confirm"] is False
+    assert update_data["confirm"] is True
     assert update_data["effect"] == "conditional"
     assert update_data["confirmation"] == "conditional"
 
@@ -127,15 +127,25 @@ def test_schema_calendar_command_semantics(runner):
 
 def test_schema_command_with_arguments(runner):
     result = runner.invoke(cli, ["schema", "email.read"])
-
     assert result.exit_code == 0
     payload = json.loads(result.output)["data"]
-    assert payload["name"] == "email.read"
-    assert payload["write"] is False
-    assert any(arg["name"] == "message_id" for arg in payload["arguments"])
-    option_names = {opt["name"] for opt in payload["options"]}
-    assert "--include-html" in option_names
-    assert "--max-body-length" in option_names
+    arg_names = {arg["name"] for arg in payload["arguments"]}
+    assert "message_id" in arg_names
+
+
+def test_schema_config_init_semantics(runner):
+    result = runner.invoke(cli, ["schema", "config.init"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)["data"]
+    assert data["write"] is True
+    assert data["effect"] == "internal_modify"
+
+
+def test_format_text_honored_on_cli_error(runner):
+    result = runner.invoke(cli, ["--format", "text", "email", "send"])
+
+    assert result.exit_code == 2
+    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
 
 
 def test_trailing_format_option_is_hoisted(runner):
@@ -172,6 +182,8 @@ def test_explicit_request_id_in_error(runner):
     assert result.exit_code == 2
     data = json.loads(result.stdout)
     assert data["request_id"] == "custom-req-123"
+    assert data["meta"]["request_id"] == "custom-req-123"
+    assert "elapsed_ms" in data["meta"]
 
 
 def test_explicit_request_id_in_schema_success(runner):

@@ -8,12 +8,36 @@ import click
 from exchangelib.errors import (
     DoesNotExist,
     ErrorAccessDenied,
+    ErrorFolderNotFound,
+    ErrorInvalidFolderId,
+    ErrorInvalidId,
+    ErrorInvalidIdEmpty,
+    ErrorInvalidIdMalformed,
+    ErrorInvalidIdMalformedEwsLegacyIdFormat,
+    ErrorInvalidIdMonikerTooLong,
+    ErrorInvalidIdStoreObjectIdTooLong,
     ErrorItemNotFound,
+    ErrorParentFolderNotFound,
     ErrorServerBusy,
     ErrorTimeoutExpired,
     RateLimitError,
+    ResponseMessageError,
     TransportError,
     UnauthorizedError,
+)
+
+NOT_FOUND_EXCEPTIONS = (
+    DoesNotExist,
+    ErrorItemNotFound,
+    ErrorFolderNotFound,
+    ErrorInvalidId,
+    ErrorInvalidIdMalformed,
+    ErrorInvalidIdEmpty,
+    ErrorInvalidIdMalformedEwsLegacyIdFormat,
+    ErrorInvalidIdMonikerTooLong,
+    ErrorInvalidIdStoreObjectIdTooLong,
+    ErrorInvalidFolderId,
+    ErrorParentFolderNotFound,
 )
 
 WRITE_UNKNOWN_CODES = {"TIMEOUT_ERROR", "SERVER_BUSY", "CONNECTION_ERROR"}
@@ -64,14 +88,21 @@ def classify_exception(exc: Exception, *, default_code: str = "SERVER_ERROR") ->
         return CliError(exc.format_message(), code="INVALID_INPUT", exit_code=exc.exit_code)
     if isinstance(exc, UnauthorizedError):
         return CliError("Authentication failed. Check username/password.", code="AUTH_ERROR")
-    if isinstance(exc, (DoesNotExist, ErrorItemNotFound)):
-        return CliError("The requested Exchange item was not found.", code="NOT_FOUND")
     if isinstance(exc, ErrorAccessDenied):
         return CliError("Exchange denied access to the requested resource.", code="PERMISSION_ERROR")
     if isinstance(exc, (ErrorTimeoutExpired, TimeoutError)):
         return CliError("The Exchange operation timed out.", code="TIMEOUT_ERROR", retryable=True)
     if isinstance(exc, (ErrorServerBusy, RateLimitError)):
         return CliError("Exchange Server is busy. Retry later.", code="SERVER_BUSY", retryable=True)
+    if isinstance(exc, NOT_FOUND_EXCEPTIONS):
+        return CliError("The requested Exchange item or folder was not found.", code="NOT_FOUND")
+    if isinstance(exc, ResponseMessageError):
+        return CliError(
+            str(exc) or "Exchange Server returned an error.",
+            code="SERVER_ERROR",
+            retryable=False,
+            details={"ews_error": type(exc).__name__},
+        )
     if isinstance(exc, TransportError):
         return CliError("Could not connect to Exchange Server.", code="CONNECTION_ERROR", retryable=True)
     if isinstance(exc, (ValueError, TypeError)):

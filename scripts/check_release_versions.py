@@ -136,15 +136,20 @@ def _check_main_manifest(repo_root: Path, version: str, errors: list[str]) -> No
             )
 
     files = manifest.get("files")
-    if not isinstance(files, list) or "skills/" not in files:
-        errors.append(f"{relative_path}: files must include 'skills/'")
+    expected_files = ["bin/", "install.js"]
+    if not isinstance(files, list):
+        errors.append(f"{relative_path}: files must be a list")
+    else:
+        for expected_file in expected_files:
+            if expected_file not in files:
+                errors.append(f"{relative_path}: files must include '{expected_file}'")
+        if "skills/" in files:
+            errors.append(f"{relative_path}: files must not include 'skills/'")
 
-    pkg_skill = repo_root / "npm" / "exchange-cli" / "skills" / "SKILL.md"
-    root_skill = repo_root / "skills" / "SKILL.md"
-    if not pkg_skill.is_file():
-        errors.append(f"{_relative(pkg_skill, repo_root)}: package skill file is missing")
-    elif root_skill.is_file() and pkg_skill.read_text(encoding="utf-8") != root_skill.read_text(encoding="utf-8"):
-        errors.append(f"{_relative(pkg_skill, repo_root)}: content differs from root skills/SKILL.md")
+    pkg_skill = repo_root / "npm" / "exchange-cli" / "skills"
+    if pkg_skill.exists():
+        errors.append(f"{_relative(pkg_skill, repo_root)}: skills directory must not exist in npm package")
+
 
 
 def check_versions(repo_root: Path, tag: str | None = None) -> tuple[str, list[str]]:

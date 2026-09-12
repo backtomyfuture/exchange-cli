@@ -42,17 +42,10 @@ def release_tree(tmp_path):
         {
             "name": MAIN_PACKAGE_NAME,
             "version": version,
-            "files": ["bin/", "install.js", "skills/"],
+            "files": ["bin/", "install.js"],
             "optionalDependencies": dependencies,
         },
     )
-    skill_content = "# skill\n"
-    root_skill = tmp_path / "skills" / "SKILL.md"
-    root_skill.parent.mkdir(parents=True, exist_ok=True)
-    root_skill.write_text(skill_content, encoding="utf-8")
-    pkg_skill = tmp_path / "npm" / "exchange-cli" / "skills" / "SKILL.md"
-    pkg_skill.parent.mkdir(parents=True, exist_ok=True)
-    pkg_skill.write_text(skill_content, encoding="utf-8")
     return tmp_path
 
 
@@ -143,30 +136,34 @@ def test_invalid_manifest_json_is_reported_without_traceback(release_tree):
     assert "invalid JSON" in errors[0]
 
 
-def test_missing_skills_in_files_is_reported(release_tree):
+def test_missing_required_file_in_files_is_reported(release_tree):
     manifest_path = release_tree / "npm" / "exchange-cli" / "package.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["files"] = ["bin/", "install.js"]
+    manifest["files"] = ["install.js"]
     _write_json(manifest_path, manifest)
 
     _, errors = check_versions(release_tree)
 
-    assert any("files must include 'skills/'" in error for error in errors)
+    assert any("files must include 'bin/'" in error for error in errors)
 
 
-def test_missing_pkg_skill_is_reported(release_tree):
-    pkg_skill = release_tree / "npm" / "exchange-cli" / "skills" / "SKILL.md"
-    pkg_skill.unlink()
-
-    _, errors = check_versions(release_tree)
-
-    assert any("package skill file is missing" in error for error in errors)
-
-
-def test_differing_pkg_skill_is_reported(release_tree):
-    pkg_skill = release_tree / "npm" / "exchange-cli" / "skills" / "SKILL.md"
-    pkg_skill.write_text("# different\n", encoding="utf-8")
+def test_skills_in_files_is_reported(release_tree):
+    manifest_path = release_tree / "npm" / "exchange-cli" / "package.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"] = ["bin/", "install.js", "skills/"]
+    _write_json(manifest_path, manifest)
 
     _, errors = check_versions(release_tree)
 
-    assert any("content differs from root skills/SKILL.md" in error for error in errors)
+    assert any("files must not include 'skills/'" in error for error in errors)
+
+
+def test_skills_dir_in_npm_package_is_reported(release_tree):
+    pkg_skill = release_tree / "npm" / "exchange-cli" / "skills"
+    pkg_skill.mkdir(parents=True, exist_ok=True)
+    (pkg_skill / "SKILL.md").write_text("# leftover\n", encoding="utf-8")
+
+    _, errors = check_versions(release_tree)
+
+    assert any("skills directory must not exist in npm package" in error for error in errors)
+

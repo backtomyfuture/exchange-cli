@@ -172,7 +172,7 @@ COMMAND_SEMANTICS: dict[str, dict[str, Any]] = {
     },
     "calendar.update": {
         "write": True,
-        "confirm": False,
+        "confirm": True,
         "effect": "conditional",
         "confirmation": "conditional",
         "retry": "never_on_unknown_outcome",
@@ -283,7 +283,7 @@ COMMAND_SEMANTICS: dict[str, dict[str, Any]] = {
     },
     # Configuration and Diagnostics
     "config.init": {
-        "write": False,
+        "write": True,
         "confirm": False,
         "effect": "internal_modify",
         "confirmation": "none",

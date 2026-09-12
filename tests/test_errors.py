@@ -3,8 +3,11 @@ import pytest
 from exchangelib.errors import (
     DoesNotExist,
     ErrorAccessDenied,
+    ErrorFolderNotFound,
+    ErrorInvalidIdMalformed,
     ErrorServerBusy,
     ErrorTimeoutExpired,
+    ResponseMessageError,
     TransportError,
     UnauthorizedError,
 )
@@ -16,6 +19,8 @@ from exchange_cli.core.errors import CliError, classify_exception, classify_writ
     ("exception", "code", "exit_code", "retryable"),
     [
         (DoesNotExist("missing"), "NOT_FOUND", 1, False),
+        (ErrorFolderNotFound("missing folder"), "NOT_FOUND", 1, False),
+        (ErrorInvalidIdMalformed("bad id format"), "NOT_FOUND", 1, False),
         (ErrorAccessDenied("denied"), "PERMISSION_ERROR", 1, False),
         (ErrorTimeoutExpired("timeout"), "TIMEOUT_ERROR", 1, True),
         (TimeoutError("timeout"), "TIMEOUT_ERROR", 1, True),
@@ -77,3 +82,21 @@ def test_write_unknown_error_serializes_outcome():
 
     assert error.to_dict()["outcome"] == "unknown"
     assert error.to_dict()["retryable"] is False
+
+
+def test_classify_response_message_error_as_server_error():
+    exc = ResponseMessageError("something failed on server")
+    error = classify_exception(exc)
+
+    assert error.code == "SERVER_ERROR"
+    assert error.retryable is False
+    assert error.details == {"ews_error": "ResponseMessageError"}
+
+
+def test_write_invalid_id_is_not_found_and_not_unknown():
+    error = classify_write_exception(ErrorInvalidIdMalformed("invalid id format"))
+
+    assert error.code == "NOT_FOUND"
+    assert error.retryable is False
+    assert error.outcome == "failed"
+

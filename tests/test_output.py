@@ -46,6 +46,19 @@ class TestOutputFormatter:
             "details": {"stage": "connect"},
         }
 
+    def test_json_error_with_request_id_and_meta(self):
+        import time
+
+        formatter = OutputFormatter("json", request_id="req-999", start_time=time.monotonic() - 0.05)
+        buf = io.StringIO()
+        formatter.error("Failed", code="SERVER_ERROR", file=buf)
+        data = json.loads(buf.getvalue())
+        assert data["ok"] is False
+        assert data["request_id"] == "req-999"
+        assert data["meta"]["request_id"] == "req-999"
+        assert data["meta"]["elapsed_ms"] >= 0
+
+
     def test_text_success_single(self):
         formatter = OutputFormatter("text")
         buf = io.StringIO()

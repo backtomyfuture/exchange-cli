@@ -353,7 +353,7 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Max results")
 @click.option("--start", default=None, help="Start date/time (YYYY-MM-DD or RFC 3339)")
 @click.option("--end", default=None, help="End date/time (YYYY-MM-DD or RFC 3339)")
-@click.option("--from", "from_addr", default=None, help="Filter by sender (name or email)")
+@click.option("--from", "from_addr", default=None, help="Filter by sender (name or email; resolved via directory)")
 @click.option("--has-attachments", is_flag=True, default=False, help="Only return emails with attachments")
 @click.option(
     "--with-preview",
@@ -370,7 +370,8 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
         if start_dt and end_dt:
             ensure_start_before_end(start_dt, end_dt, action="email.search")
         folder_name = _require_folder_arg(folder_name)
-        folder = resolve_mail_folder(get_connection(ctx), folder_name)
+        account = get_connection(ctx)
+        folder = resolve_mail_folder(account, folder_name)
         criteria = Q(subject__icontains=query) | Q(body__icontains=query)
         if start_dt:
             criteria &= Q(datetime_received__gte=start_dt)
@@ -378,7 +379,19 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
             criteria &= Q(datetime_received__lte=end_dt)
         if from_addr:
             from_addr_clean = from_addr.strip()
-            criteria &= (Q(sender__icontains=from_addr_clean) | Q(author__icontains=from_addr_clean))
+            from_q = Q(sender__icontains=from_addr_clean) | Q(author__icontains=from_addr_clean)
+            if "@" not in from_addr_clean:
+                try:
+                    from ..core.contact_service import resolve_directory
+
+                    resolved_entries, _ = resolve_directory(account, from_addr_clean, limit=5)
+                    for entry in resolved_entries:
+                        email_addr = entry.get("email")
+                        if email_addr and email_addr.lower() != from_addr_clean.lower():
+                            from_q |= Q(sender__icontains=email_addr) | Q(author__icontains=email_addr)
+                except Exception:
+                    pass
+            criteria &= from_q
         if has_attachments:
             criteria &= Q(has_attachments=True)
         queryset = folder.filter(criteria)

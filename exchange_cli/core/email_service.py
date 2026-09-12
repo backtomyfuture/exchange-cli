@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from exchangelib.errors import DoesNotExist, ErrorItemNotFound
+from exchangelib.errors import ResponseMessageError
 from exchangelib.folders import Folder
 
-from .errors import CliError
+from .errors import NOT_FOUND_EXCEPTIONS, CliError
 from .query import take_page
 from .serializers import serialize_email_summary
 
@@ -32,7 +32,7 @@ def resolve_mail_folder(account, folder_name: str):
     folder = Folder(root=account.root, id=raw)
     try:
         folder.refresh()
-    except (DoesNotExist, ErrorItemNotFound, ValueError, TypeError) as exc:
+    except (*NOT_FOUND_EXCEPTIONS, ResponseMessageError, ValueError, TypeError) as exc:
         raise CliError(
             f"Folder not found: {raw}.",
             code="NOT_FOUND",
@@ -93,7 +93,7 @@ def find_message(account, message_id: str):
     for folder in folders:
         try:
             return folder.get(id=message_id)
-        except (DoesNotExist, ErrorItemNotFound):
+        except (*NOT_FOUND_EXCEPTIONS, ResponseMessageError):
             continue
     return None
 

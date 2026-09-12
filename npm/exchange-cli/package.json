@@ -10,8 +10,7 @@
   },
   "files": [
     "bin/",
-    "install.js",
-    "skills/"
+    "install.js"
   ],
   "optionalDependencies": {
     "@backtomyfuture/exchange-cli-darwin-arm64": "0.2.3",

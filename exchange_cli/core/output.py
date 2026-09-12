@@ -84,6 +84,10 @@ class OutputFormatter:
                 payload["details"] = details
             if self.request_id:
                 payload["request_id"] = self.request_id
+                meta: dict[str, Any] = {"request_id": self.request_id}
+                if self.start_time is not None:
+                    meta["elapsed_ms"] = round((time.monotonic() - self.start_time) * 1000, 2)
+                payload["meta"] = meta
             json.dump(payload, handle, ensure_ascii=False)
             handle.write("\n")
             return

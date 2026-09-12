@@ -129,6 +129,32 @@ class TestEmailRead:
         with pytest.raises(TransportError):
             _find_message(mock_conn, "AAMk123")
 
+    def test_find_message_skips_invalid_id_malformed(self, mock_conn):
+        from exchangelib.errors import ErrorInvalidIdMalformed
+
+        mock_conn.inbox.get.side_effect = ErrorInvalidIdMalformed("malformed id")
+        message = _mock_message()
+        mock_conn.sent.get.return_value = message
+
+        assert _find_message(mock_conn, "AAMkFAKEID") is message
+
+    def test_read_message_not_found_on_fake_id(self, runner, mock_conn):
+        from exchangelib.errors import ErrorInvalidIdMalformed
+
+        mock_conn.inbox.get.side_effect = ErrorInvalidIdMalformed("malformed id")
+        mock_conn.sent.get.side_effect = ErrorInvalidIdMalformed("malformed id")
+        mock_conn.drafts.get.side_effect = ErrorInvalidIdMalformed("malformed id")
+        mock_conn.trash.get.side_effect = ErrorInvalidIdMalformed("malformed id")
+        mock_conn.junk.get.side_effect = ErrorInvalidIdMalformed("malformed id")
+
+        result = runner.invoke(cli, ["email", "read", "AAMkFAKEID"])
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["ok"] is False
+        assert data["code"] == "NOT_FOUND"
+        assert data["retryable"] is False
+
+
     def test_read_message_default_markdown(self, runner, mock_conn):
         message = _mock_message()
         message.body = "<html><body><p>Hello <b>World</b></p></body></html>"
@@ -374,6 +400,22 @@ class TestEmailSearch:
         q_expr = str(call_args[0])
         assert "sender icontains 'alice@example.com'" in q_expr
         assert "has_attachments == True" in q_expr
+
+    def test_search_resolves_chinese_name_via_directory(self, runner, mock_conn):
+        mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[]
+        )
+        with patch(
+            "exchange_cli.core.contact_service.resolve_directory",
+            return_value=([{"name": "张霞", "email": "zhang-xia@tianjin-air.com"}], False),
+        ):
+            result = runner.invoke(cli, ["email", "search", "通知", "--from", "张霞"])
+            assert result.exit_code == 0
+            call_args = mock_conn.inbox.filter.call_args[0]
+            q_expr = str(call_args[0])
+            assert "张霞" in q_expr
+            assert "zhang-xia@tianjin-air.com" in q_expr
+
 
     def test_search_criteria_can_serialize_to_xml(self):
         from exchangelib import Folder, Message, Q

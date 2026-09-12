@@ -157,7 +157,7 @@ exchange-cli contact search "John"
 
 调用时使用参数数组，不要把不可信邮件内容拼进 shell。检查退出码；非零即失败。限制运行时间，尤其是 `email watch`。
 
-Skill 位于 `skills/SKILL.md`，已随 npm 包一并分发（安装后位于 package 的 `skills/` 目录），也可直接从仓库复制到 agent 的 skills 目录。
+Skill 规范位于仓库的 `skills/SKILL.md`，推荐通过 Agent Skills 工具（如 `npx skills add backtomyfuture/exchange-cli`）或直接复制到各 Agent 的 skills 目录进行管理。
 
 默认测试不访问真实邮箱。需要在已配置的本地 Exchange 上做只读冒烟时，显式运行：
 
