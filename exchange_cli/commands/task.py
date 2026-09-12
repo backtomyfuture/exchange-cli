@@ -38,6 +38,7 @@ def task(ctx):
 @click.option("--status", default=None, type=click.Choice(TASK_STATUSES, case_sensitive=False), help="Filter by status")
 @click.pass_context
 def task_list(ctx, limit, status):
+    """List tasks with optional status filter."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -59,6 +60,7 @@ def task_list(ctx, limit, status):
 )
 @click.pass_context
 def task_create(ctx, subject, due, body, status):
+    """Create a new task."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         due_date = _parse_due_date(due) if due else None
@@ -85,6 +87,7 @@ def task_create(ctx, subject, due, body, status):
 @click.option("--status", default=None, type=click.Choice(TASK_STATUSES, case_sensitive=False), help="New status")
 @click.pass_context
 def task_update(ctx, task_id, subject, due, status):
+    """Update an existing task."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         if all(value is None for value in (subject, due, status)):
@@ -118,6 +121,7 @@ def task_update(ctx, task_id, subject, due, status):
 @click.argument("task_id")
 @click.pass_context
 def task_complete(ctx, task_id):
+    """Mark a task as completed."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -138,6 +142,7 @@ def task_complete(ctx, task_id):
 @click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
 def task_delete(ctx, task_id, dry_run, confirm):
+    """Delete a task."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     if dry_run:
         formatter.success(

@@ -204,4 +204,4 @@ class TestConnectionManager:
         with pytest.raises(CliError) as caught:
             connection.get_account()
 
-        assert caught.value.code == "CONFIG_INVALID"
+        assert caught.value.code == "CA_BUNDLE_NOT_FOUND"

@@ -335,6 +335,18 @@ def foreground_watch_events(
             try:
                 event = subscriber.get(timeout=timeout)
             except queue.Empty:
+                if duration_seconds is not None:
+                    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                    if elapsed >= duration_seconds:
+                        yield {
+                            "event_type": "watcher_status",
+                            "status": "stopped",
+                            "detail": "duration_elapsed",
+                            "timestamp": iso_now(),
+                            "folder": folder_name,
+                            "account": account_email,
+                        }
+                        return
                 yield {
                     "event_type": "heartbeat",
                     "timestamp": iso_now(),

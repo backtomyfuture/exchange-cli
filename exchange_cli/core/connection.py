@@ -65,7 +65,7 @@ def create_account(credentials_dict: dict[str, Any]) -> Account:
         if not resolved_ca.is_file():
             raise CliError(
                 f"Configured CA bundle file not found: {ca_bundle}",
-                code="CONFIG_INVALID",
+                code="CA_BUNDLE_NOT_FOUND",
                 exit_code=2,
             )
         os.environ["REQUESTS_CA_BUNDLE"] = str(resolved_ca.resolve())

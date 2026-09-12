@@ -23,6 +23,7 @@ def contact(ctx):
 @click.option("--limit", default=50, type=click.IntRange(1, MAX_RESULTS), help="Max contacts to return")
 @click.pass_context
 def contact_list(ctx, limit):
+    """List contacts from personal contacts."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -37,6 +38,7 @@ def contact_list(ctx, limit):
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Max results")
 @click.pass_context
 def contact_search(ctx, query, limit):
+    """Search personal contacts by name or email."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)

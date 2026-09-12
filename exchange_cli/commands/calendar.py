@@ -80,6 +80,7 @@ def calendar(ctx):
 @click.option("--limit", default=50, type=click.IntRange(1, MAX_RESULTS), help="Max results")
 @click.pass_context
 def calendar_list(ctx, start, end, limit):
+    """List calendar events within a date range."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         timezone = EWSTimeZone.localzone()
@@ -112,35 +113,36 @@ def calendar_list(ctx, start, end, limit):
 @click.option("--confirm", is_flag=True, help="Confirm sending meeting invitations when attendees are set")
 @click.pass_context
 def calendar_create(ctx, subject, start, end, location, body, attendees, notify, dry_run, confirm):
+    """Create a new calendar event or meeting."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
-    try:
-        start_dt = _parse_datetime(start)
-        end_dt = _parse_datetime(end)
-        ensure_start_before_end(start_dt, end_dt, action="calendar.create")
-        attendee_addresses = (
-            [address.strip() for address in attendees.split(",") if address.strip()] if attendees else []
+    start_dt = _parse_datetime(start)
+    end_dt = _parse_datetime(end)
+    ensure_start_before_end(start_dt, end_dt, action="calendar.create")
+    attendee_addresses = (
+        [address.strip() for address in attendees.split(",") if address.strip()] if attendees else []
+    )
+    notify = notify.lower()
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "calendar.create",
+                "preview": {
+                    "subject": subject,
+                    "start": start_dt.isoformat() if hasattr(start_dt, "isoformat") else str(start_dt),
+                    "end": end_dt.isoformat() if hasattr(end_dt, "isoformat") else str(end_dt),
+                    "location": location,
+                    "body_length": len(body),
+                    "attendees": attendee_addresses,
+                    "notify": notify,
+                    "requires_confirm": bool(attendee_addresses and notify != "none"),
+                },
+            }
         )
-        notify = notify.lower()
-        if dry_run:
-            formatter.success(
-                {
-                    "dry_run": True,
-                    "action": "calendar.create",
-                    "preview": {
-                        "subject": subject,
-                        "start": start_dt.isoformat() if hasattr(start_dt, "isoformat") else str(start_dt),
-                        "end": end_dt.isoformat() if hasattr(end_dt, "isoformat") else str(end_dt),
-                        "location": location,
-                        "body_length": len(body),
-                        "attendees": attendee_addresses,
-                        "notify": notify,
-                        "requires_confirm": bool(attendee_addresses and notify != "none"),
-                    },
-                }
-            )
-            return
-        if attendee_addresses and notify != "none":
-            require_confirmation(confirm, action="calendar.create_with_attendees")
+        return
+    if attendee_addresses and notify != "none":
+        require_confirmation(confirm, action="calendar.create_with_attendees")
+    try:
         account = get_connection(ctx)
         event = CalendarItem(
             account=account,
@@ -185,19 +187,20 @@ def calendar_create(ctx, subject, start, end, location, body, attendees, notify,
 @click.option("--confirm", is_flag=True, help="Confirm sending update notices when --notify all is set")
 @click.pass_context
 def calendar_update(ctx, event_id, subject, start, end, location, notify, confirm):
+    """Update an existing calendar event."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    if all(value is None for value in (subject, start, end, location)):
+        raise CliError(
+            "At least one update option is required.",
+            code="INVALID_INPUT",
+            exit_code=2,
+        )
+    notify = notify.lower()
+    if notify != "none":
+        require_confirmation(confirm, action="calendar.update_with_notice")
+    start_dt = _parse_datetime(start) if start is not None else None
+    end_dt = _parse_datetime(end) if end is not None else None
     try:
-        if all(value is None for value in (subject, start, end, location)):
-            raise CliError(
-                "At least one update option is required.",
-                code="INVALID_INPUT",
-                exit_code=2,
-            )
-        notify = notify.lower()
-        if notify != "none":
-            require_confirmation(confirm, action="calendar.update_with_notice")
-        start_dt = _parse_datetime(start) if start is not None else None
-        end_dt = _parse_datetime(end) if end is not None else None
         account = get_connection(ctx)
         event = account.calendar.get(id=event_id)
         if start_dt is not None or end_dt is not None:
@@ -247,6 +250,7 @@ def calendar_update(ctx, event_id, subject, start, end, location, notify, confir
 @click.option("--confirm", is_flag=True, help="Confirm deletion")
 @click.pass_context
 def calendar_delete(ctx, event_id, notify, dry_run, confirm):
+    """Delete a calendar event or cancel a meeting."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     notify = notify.lower()
     if dry_run:

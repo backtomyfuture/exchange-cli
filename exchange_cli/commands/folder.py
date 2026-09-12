@@ -32,6 +32,7 @@ def folder(ctx):
 @folder.command("list")
 @click.pass_context
 def folder_list(ctx):
+    """List well-known and top-level folders."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -45,6 +46,7 @@ def folder_list(ctx):
 @folder.command("tree")
 @click.pass_context
 def folder_tree(ctx):
+    """Display the folder hierarchy as a tree."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)

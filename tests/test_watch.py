@@ -173,3 +173,31 @@ def test_backfill_failure_emits_gap_and_exits_subscription_for_retry(tmp_path, m
     assert gap["code"] == "TIMEOUT_ERROR"
     assert watcher._backfill_cutoff is not None
     assert actions == ["unsubscribe"]
+
+
+def test_watch_duration_elapsed_does_not_emit_spurious_heartbeat(tmp_path, monkeypatch):
+    from exchange_cli.core.config import ConfigManager
+    from exchange_cli.core.watch import foreground_watch_events
+
+    ConfigManager(config_dir=tmp_path).save_account("test@example.com", "mail.example.com", "user", "pass", "ntlm")
+
+    class DummyWatcher:
+        def __init__(self, *args, **kwargs):
+            self.connection_manager = SimpleNamespace(close=lambda: None)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+    monkeypatch.setattr("exchange_cli.core.watch.FolderWatcher", DummyWatcher)
+
+    events = list(foreground_watch_events(tmp_path, "test@example.com", "inbox", 5, duration_seconds=1))
+    assert len(events) == 1
+    assert events[0]["event_type"] == "watcher_status"
+    assert events[0]["status"] == "stopped"
+    assert events[0]["detail"] == "duration_elapsed"

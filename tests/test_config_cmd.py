@@ -92,6 +92,18 @@ class TestConfigInit:
         assert account["username"] == "hnanet\\testuser"
         assert account["auth_type"] == "ntlm"
 
+    def test_init_aborted_keeps_stdout_valid_json(self, runner, tmp_path):
+        config_dir = tmp_path / ".exchange-cli"
+        result = runner.invoke(
+            cli,
+            ["--config", str(config_dir), "config", "init"],
+            input="",
+        )
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["ok"] is False
+        assert data["code"] == "ABORTED"
+
 class TestConfigShow:
     def test_show_json(self, runner, tmp_path):
         from exchange_cli.core.config import ConfigManager

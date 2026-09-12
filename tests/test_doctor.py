@@ -37,6 +37,8 @@ class TestDoctor:
         assert result.exit_code == 0
         data = json.loads(result.stdout)
         assert data["ok"] is True
+        assert "meta" in data and "request_id" in data["meta"]
+        assert "elapsed_ms" in data["meta"]
         assert data["data"]["overall"] == "pass"
         assert data["data"]["checks"] == [
             {"id": "effective_config", "status": "pass"},
@@ -171,3 +173,14 @@ class TestDoctor:
         assert json.loads(retired_command.stdout)["code"] == "INVALID_INPUT"
         assert root_help.exit_code == 0
         assert "\n  doctor" in root_help.output
+
+    @patch("exchange_cli.commands.doctor.probe_connection", return_value=True)
+    def test_echoes_explicit_request_id_in_meta(self, mock_probe, runner, tmp_path):
+        config_dir = _config_dir(tmp_path)
+        result = runner.invoke(cli, ["--request-id", "REQ-DOCTOR-123", "--config", str(config_dir), "doctor"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert data["ok"] is True
+        assert data["meta"]["request_id"] == "REQ-DOCTOR-123"
+        assert "elapsed_ms" in data["meta"]

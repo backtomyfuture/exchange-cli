@@ -73,7 +73,7 @@ def config_init(ctx, ca_bundle, preset):
 
     if config_manager.config_path.exists() or config_manager.config_path.is_symlink():
         click.echo("Existing configuration found.", err=True)
-        if not click.confirm("Overwrite the existing single-account configuration?", default=False):
+        if not click.confirm("Overwrite the existing single-account configuration?", default=False, err=True):
             formatter.success({"message": "Configuration unchanged", "changed": False})
             return
 
@@ -81,9 +81,9 @@ def config_init(ctx, ca_bundle, preset):
 
     server_default = os.environ.get("EXCHANGE_SERVER") or (active_preset["server"] if active_preset else None)
     if server_default:
-        server = click.prompt("Exchange Server", type=str, default=server_default, show_default=True)
+        server = click.prompt("Exchange Server", type=str, default=server_default, show_default=True, err=True)
     else:
-        server = click.prompt("Exchange Server", type=str)
+        server = click.prompt("Exchange Server", type=str, err=True)
 
     username_default = os.environ.get("EXCHANGE_USERNAME")
     if not username_default:
@@ -98,26 +98,27 @@ def config_init(ctx, ca_bundle, preset):
             type=str,
             default=username_default,
             show_default=True,
+            err=True,
         )
     else:
-        username = click.prompt("Username (e.g. DOMAIN\\user or user@domain.com)", type=str)
+        username = click.prompt("Username (e.g. DOMAIN\\user or user@domain.com)", type=str, err=True)
 
-    password = click.prompt("Password", type=str, hide_input=True)
+    password = click.prompt("Password", type=str, hide_input=True, err=True)
     auth_default = (
         os.environ.get("EXCHANGE_AUTH_TYPE") or (active_preset["auth_type"] if active_preset else "ntlm")
     ).lower()
     if auth_default not in {"ntlm", "basic"}:
         auth_default = "ntlm"
-    auth_type = click.prompt("Auth type", type=click.Choice(["ntlm", "basic"]), default=auth_default)
+    auth_type = click.prompt("Auth type", type=click.Choice(["ntlm", "basic"]), default=auth_default, err=True)
 
     email_default = os.environ.get("EXCHANGE_EMAIL")
     if not email_default:
         suffix = os.environ.get("EXCHANGE_EMAIL_SUFFIX") or (active_preset["email_suffix"] if active_preset else None)
         email_default = _derive_email_from_username(username, suffix)
     if email_default:
-        email = click.prompt("Email address", type=str, default=email_default, show_default=True)
+        email = click.prompt("Email address", type=str, default=email_default, show_default=True, err=True)
     else:
-        email = click.prompt("Email address", type=str)
+        email = click.prompt("Email address", type=str, err=True)
 
     server = _normalize_text(server) or server
     parts = server.split(".")
@@ -136,7 +137,7 @@ def config_init(ctx, ca_bundle, preset):
         ca_bundle_resolved = ca_bundle_resolved.strip() or None
 
     no_verify_default = os.environ.get("EXCHANGE_NO_VERIFY_SSL", "").strip().lower() in TRUTHY_VALUES
-    no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default)
+    no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default, err=True)
     if no_verify_ssl:
         click.echo(
             "Warning: Disabling SSL certificate verification is insecure and will cause 'exchange-cli doctor' to fail.",
@@ -166,7 +167,7 @@ def config_init(ctx, ca_bundle, preset):
     except Exception as exc:
         test_error = classify_exception(exc)
         click.echo(f"Connection test failed [{test_error.code}]: {test_error.message}", err=True)
-        if not click.confirm("Save this unverified configuration anyway?", default=False):
+        if not click.confirm("Save this unverified configuration anyway?", default=False, err=True):
             formatter.success(
                 {
                     "message": "Configuration not saved",

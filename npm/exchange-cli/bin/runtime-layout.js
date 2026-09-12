@@ -2,8 +2,34 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+
+function getUserCacheMarkerPath(internalDir) {
+  const homeDir = os.homedir();
+  let cacheBase;
+  if (process.platform === 'darwin') {
+    cacheBase = path.join(homeDir, 'Library', 'Caches', 'exchange-cli');
+  } else if (process.platform === 'win32') {
+    cacheBase = path.join(
+      process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local'),
+      'exchange-cli'
+    );
+  } else {
+    cacheBase = path.join(
+      process.env.XDG_CACHE_HOME || path.join(homeDir, '.cache'),
+      'exchange-cli'
+    );
+  }
+  const hash = crypto
+    .createHash('sha256')
+    .update(path.resolve(internalDir))
+    .digest('hex')
+    .slice(0, 16);
+  return path.join(cacheBase, `runtime_layout_${hash}.ok`);
+}
 
 function copyFileWithMode(src, dst) {
   fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -33,39 +59,47 @@ function copyDirRecursive(srcDir, dstDir) {
 let inMemoryLayoutChecked = false;
 
 function linkOrCopyFile(src, dst) {
-  fs.mkdirSync(path.dirname(dst), { recursive: true });
-  // Try hardlink first (fast, zero extra disk space, works on same filesystem)
   try {
-    fs.linkSync(src, dst);
-    return;
-  } catch {
-    // Fall back to relative symlink
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    // Try hardlink first (fast, zero extra disk space, works on same filesystem)
     try {
-      const rel = path.relative(path.dirname(dst), src);
-      fs.symlinkSync(rel, dst);
+      fs.linkSync(src, dst);
       return;
     } catch {
-      // Fall back to file copy
-      fs.copyFileSync(src, dst);
+      // Fall back to relative symlink
+      try {
+        const rel = path.relative(path.dirname(dst), src);
+        fs.symlinkSync(rel, dst);
+        return;
+      } catch {
+        // Fall back to file copy
+        fs.copyFileSync(src, dst);
+      }
     }
-  }
-  try {
-    const stat = fs.statSync(src);
-    fs.chmodSync(dst, stat.mode & 0o777);
+    try {
+      const stat = fs.statSync(src);
+      fs.chmodSync(dst, stat.mode & 0o777);
+    } catch {
+      // Best effort only.
+    }
   } catch {
-    // Best effort only.
+    // Best effort only: dst dir may be read-only.
   }
 }
 
 function linkOrCopyDir(srcDir, dstDir) {
-  fs.mkdirSync(path.dirname(dstDir), { recursive: true });
-  // Try symlink first for directories (like Versions/Current -> 3.12)
   try {
-    const rel = path.relative(path.dirname(dstDir), srcDir);
-    fs.symlinkSync(rel, dstDir, 'junction');
-    return;
+    fs.mkdirSync(path.dirname(dstDir), { recursive: true });
+    // Try symlink first for directories (like Versions/Current -> 3.12)
+    try {
+      const rel = path.relative(path.dirname(dstDir), srcDir);
+      fs.symlinkSync(rel, dstDir, 'junction');
+      return;
+    } catch {
+      copyDirRecursive(srcDir, dstDir);
+    }
   } catch {
-    copyDirRecursive(srcDir, dstDir);
+    // Best effort only: dst dir may be read-only.
   }
 }
 
@@ -73,16 +107,23 @@ function linkOrCopyIfMissing(src, dst, logger) {
   if (fs.existsSync(dst) || !fs.existsSync(src)) {
     return false;
   }
-  const stat = fs.statSync(src);
-  if (stat.isDirectory()) {
-    linkOrCopyDir(src, dst);
-  } else {
-    linkOrCopyFile(src, dst);
+  try {
+    const stat = fs.statSync(src);
+    if (stat.isDirectory()) {
+      linkOrCopyDir(src, dst);
+    } else {
+      linkOrCopyFile(src, dst);
+    }
+    if (fs.existsSync(dst)) {
+      if (logger) {
+        logger(`exchange-cli: repaired missing runtime path ${path.basename(dst)}`);
+      }
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
-  if (logger) {
-    logger(`exchange-cli: repaired missing runtime path ${path.basename(dst)}`);
-  }
-  return true;
 }
 
 function resolveFrameworkVersionDir(internalDir) {
@@ -124,7 +165,8 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
   }
 
   const markerPath = path.join(internalDir, '.runtime_layout_ok');
-  if (fs.existsSync(markerPath)) {
+  const userCacheMarkerPath = getUserCacheMarkerPath(internalDir);
+  if (fs.existsSync(markerPath) || fs.existsSync(userCacheMarkerPath)) {
     inMemoryLayoutChecked = true;
     return { changed: false };
   }
@@ -158,10 +200,21 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
     // Best effort only.
   }
 
+  let markerWritten = false;
   try {
     fs.writeFileSync(markerPath, '');
+    markerWritten = true;
   } catch {
-    // Best effort only.
+    // Best effort only: internalDir may be read-only in system installations.
+  }
+
+  if (!markerWritten) {
+    try {
+      fs.mkdirSync(path.dirname(userCacheMarkerPath), { recursive: true });
+      fs.writeFileSync(userCacheMarkerPath, '');
+    } catch {
+      // Best effort only.
+    }
   }
 
   inMemoryLayoutChecked = true;
@@ -170,4 +223,5 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
 
 module.exports = {
   ensureDarwinArm64RuntimeLayout,
+  getUserCacheMarkerPath,
 };

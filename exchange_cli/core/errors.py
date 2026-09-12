@@ -43,6 +43,13 @@ NOT_FOUND_EXCEPTIONS = (
 
 WRITE_UNKNOWN_CODES = {"TIMEOUT_ERROR", "SERVER_BUSY", "CONNECTION_ERROR"}
 WRITE_UNKNOWN_ADVICE = "Do not retry automatically. Reconcile with email list or calendar list."
+WRITE_NON_MUTATING_CODES = {
+    "CONFIRMATION_REQUIRED",
+    "INVALID_INPUT",
+    "INVALID_TIME_RANGE",
+    "CONFIG_INVALID",
+    "INVALID_FOLDER",
+}
 
 
 class CliError(Exception):
@@ -128,6 +135,7 @@ def classify_write_exception(exc: Exception, *, default_code: str = "SERVER_ERRO
             details=details,
             outcome="unknown",
         )
-    error.outcome = "failed"
+    if error.code not in WRITE_NON_MUTATING_CODES:
+        error.outcome = "failed"
     error.retryable = False
     return error

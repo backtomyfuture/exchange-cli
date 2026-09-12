@@ -109,3 +109,13 @@ def test_classify_invalid_name_resolution_as_invalid_input():
     assert error.exit_code == 2
     assert error.retryable is False
 
+
+def test_classify_write_exception_omits_outcome_for_non_mutating_codes():
+    error_confirm = classify_write_exception(CliError("Confirmation needed", code="CONFIRMATION_REQUIRED", exit_code=2))
+    assert error_confirm.code == "CONFIRMATION_REQUIRED"
+    assert error_confirm.outcome is None
+
+    error_input = classify_write_exception(ValueError("Bad value"))
+    assert error_input.code == "INVALID_INPUT"
+    assert error_input.outcome is None
+

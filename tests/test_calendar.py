@@ -136,6 +136,16 @@ class TestCalendarUpdate:
         assert json.loads(result.output)["code"] == "INVALID_INPUT"
         get_connection.assert_not_called()
 
+    def test_update_requires_confirmation_without_outcome_field(self, runner):
+        with patch("exchange_cli.commands.calendar.get_connection") as get_connection:
+            result = runner.invoke(cli, ["calendar", "update", "E1", "--subject", "x", "--notify", "all"])
+
+        assert result.exit_code == 2
+        payload = json.loads(result.output)
+        assert payload["code"] == "CONFIRMATION_REQUIRED"
+        assert "outcome" not in payload
+        get_connection.assert_not_called()
+
 
 class TestCalendarDelete:
     def test_delete_event(self, runner, mock_conn):

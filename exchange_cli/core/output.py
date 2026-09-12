@@ -130,10 +130,11 @@ class OutputFormatter:
                 payload["retryable"] = retryable if retryable is not None else False
                 if self.request_id:
                     payload["request_id"] = self.request_id
-                    meta: dict[str, Any] = {"request_id": self.request_id}
-                    if self.start_time is not None:
-                        meta["elapsed_ms"] = round((time.monotonic() - self.start_time) * 1000, 2)
-                    payload["meta"] = meta
+            if self.request_id:
+                meta: dict[str, Any] = {"request_id": self.request_id}
+                if self.start_time is not None:
+                    meta["elapsed_ms"] = round((time.monotonic() - self.start_time) * 1000, 2)
+                payload["meta"] = meta
             json.dump(payload, handle, ensure_ascii=False, default=_default_serializer)
             handle.write("\n")
             return

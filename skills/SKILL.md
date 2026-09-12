@@ -105,7 +105,7 @@ exchange-cli config show
 - `EXCHANGE_NO_VERIFY_SSL`
 - `EXCHANGE_TIMEOUT_SECONDS`（默认 `30`，范围 `1..300`）
 - `EXCHANGE_CA_BUNDLE`（或 `REQUESTS_CA_BUNDLE`，企业私有 CA 证书路径）
-- `EXCHANGE_CLI_CONFIG`（配置目录）
+- `EXCHANGE_CLI_CONFIG`（配置目录，默认值为 `~/.exchange-cli`，配置文件为 `~/.exchange-cli/config.json`）
 - `EXCHANGE_CLI_BINARY`（底层 Mach-O/ELF 二进制覆盖路径，供调试或自定义运行时使用）
 
 `EXCHANGE_SERVER` 应是主机域名（如 `mail.example.com`），不要使用裸 IP，避免引发证书域名不匹配（IP mismatch）。`EXCHANGE_NO_VERIFY_SSL=1` 会彻底关闭 TLS 证书校验，`exchange-cli doctor` 将判定为失败；生产环境请配置企业 CA 或使用正确域名。
@@ -122,11 +122,11 @@ exchange-cli config show
 
 处理规则：
 
-- 先判断 `ok`，再读取 `data` 或 `error`；列表数量读取 `count`；耗时与请求追踪读取 `meta.elapsed_ms` 与 `meta.request_id`。
+- 先判断 `ok`，再读取 `data` 或 `error`；列表数量读取 `count`；耗时与请求追踪读取 `meta.elapsed_ms` 与 `meta.request_id`（`doctor`、`schema` 等所有命令在 JSON 格式下成功与失败均带 `meta`）。
 - 错误时读取 `code`、`retryable`、`request_id`、`meta` 和可选 `details`，不要靠错误文本做控制流。
-- 常见错误码：`NOT_FOUND`（资源或文件夹不存在）、`INVALID_INPUT`（参数非法、空值或未通过校验）、`INVALID_FOLDER`（未传文件夹、路径穿越或格式不合法）、`WATCH_DURATION_REQUIRED`（watch 缺少时长或 --forever）、`INVALID_AUTH_TYPE`（不支持的认证模式）、`BINARY_NOT_FOUND`（二进制缺失）、`CONFIRMATION_REQUIRED`（写操作需 --confirm）、`INVALID_TIME_RANGE`（时间范围无效如 start > end）、`CA_BUNDLE_NOT_FOUND`（指定的 CA 证书文件不存在）、`INSECURE_TLS`（TLS 校验被显式关闭）、`CONFIG_INVALID`（配置参数超出合法取值）、`ACCOUNT_MISMATCH`（--account 校验不匹配）、`ATTACHMENT_EXISTS`（附件已存在且可能覆盖）、`AUTH_ERROR`、`PERMISSION_ERROR`、`TIMEOUT_ERROR`、`SERVER_BUSY`、`CONNECTION_ERROR`、`WRITE_OUTCOME_UNKNOWN`、`SERVER_ERROR`。
-  *注意*：`exchange-cli schema` 中各命令声明的 `error_codes` 列表为提示性列表，非完整严格白名单；所有错误均严格遵守包含 `ok: false`、`code`、`error`、`retryable`、`request_id` 与 `meta` 的标准结构化错误信封。
-- 自动化始终只读取消费 `stdout` 中的 JSON 输出；`stderr` 仅供人类可读状态提示或底层第三方库警告，自动化流程切勿混用。
+- 常见错误码包括：`NOT_FOUND`（资源或文件夹不存在）、`INVALID_INPUT`（参数非法、空值或未通过校验）、`INVALID_FOLDER`（未传文件夹、路径穿越或格式不合法）、`WATCH_DURATION_REQUIRED`（watch 缺少时长或 --forever）、`INVALID_AUTH_TYPE`（不支持的认证模式）、`BINARY_NOT_FOUND`（二进制缺失）、`BINARY_SPAWN_FAILED`（底层二进制不可执行或拉起失败）、`PLATFORM_NOT_SUPPORTED`（不支持的操作系统架构）、`WRAPPER_ERROR`（包装器运行期捕获异常）、`ABORTED`（交互流程如 config init 被取消或 EOF 中止）、`CONFIRMATION_REQUIRED`（写操作需 --confirm）、`INVALID_TIME_RANGE`（时间范围无效如 start > end）、`CA_BUNDLE_NOT_FOUND`（指定的 CA 证书文件不存在）、`INSECURE_TLS`（TLS 校验被显式关闭）、`CONFIG_INVALID`（配置参数超出合法取值）、`ACCOUNT_MISMATCH`（--account 校验不匹配）、`ATTACHMENT_EXISTS`（附件已存在且可能覆盖）、`AUTH_ERROR`、`PERMISSION_ERROR`、`TIMEOUT_ERROR`、`SERVER_BUSY`、`CONNECTION_ERROR`、`WRITE_OUTCOME_UNKNOWN`、`SERVER_ERROR`。
+  *注意*：该错误码清单以及 `exchange-cli schema` 中声明的 `error_codes` 列表既非穷尽白名单也非完备列表；所有错误（无论业务层还是包装器层）均严格遵守包含 `ok: false`、`code`、`error`、`retryable`、`request_id` 与 `meta` 的标准结构化错误信封。自动化消费时应始终优先依循 `code`、`retryable` 与 `error` 契约，对未预期的业务错误码兜底走通用错误处理。
+- 自动化始终只读取消费 `stdout` 中的 JSON 输出；`stderr` 仅供人类可读状态提示或底层日志，自动化流程切勿混用。
 - 仅当 `retryable=true` 时做有限次数、带退避的重试。认证、配置、权限、输入、确认错误和 `WRITE_OUTCOME_UNKNOWN` 不要自动重试。
 - `NOT_FOUND` 时重新列出资源获取 ID，不要猜测 ID。
 - `CONFIG_KEY_MISSING` 或 `CONFIG_DECRYPT_FAILED` 时停止并请求用户处理；不要擅自删除或覆盖配置与密钥。
@@ -152,7 +152,7 @@ exchange-cli config show
 - `unique_body_html`：EWS 识别的本轮新增 HTML 正文（默认省略以节省 Token；必须显式指定 `--include-html` 或在 `--fields` 包含时才返回）。
 - `conversation_id`：Exchange 会话 ID；不可用时为 `null`。
 - `internet_message_id`：邮件的 RFC Message-ID（通常带尖括号）；不可用时为 `null`。
-- `attachments`：附件列表（包含 `name`、`size`、`content_type` 等元数据）。
+- `attachments`：附件列表（包含 `name`、`size`、`content_type` 等元数据；注意 `size` 为 EWS 服务端报告的编码后尺寸，与实际保存到磁盘后的解码字节数可能存在微小差异）。
 
 `id` 是 EWS ItemId，不能替代 `internet_message_id`。`email list`、`email search` 与 `email watch` 仍只返回摘要，不携带这些详情/会话字段。需要判断回复或转发的本轮变化时，使用 `email read MESSAGE_ID --include-html` 获取 `unique_body_html`；其为 `null` 时再由调用方基于 `body_html` 做正文分界兜底。
 

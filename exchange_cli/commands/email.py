@@ -114,6 +114,7 @@ def email(ctx):
 )
 @click.pass_context
 def email_list(ctx, folder_name, limit, unread, with_preview):
+    """List messages from a well-known folder, path, or folder id."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     folder_name = _require_folder_arg(folder_name)
     try:
@@ -165,6 +166,7 @@ def email_list(ctx, folder_name, limit, unread, with_preview):
 )
 @click.pass_context
 def email_read(ctx, message_id, save_dir, body_format, include_html, max_body_length, fields):
+    """Read one message. Returns clean Markdown body by default."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         selected = parse_field_list(fields, allowed=EMAIL_DETAIL_FIELD_CHOICES)
@@ -205,10 +207,11 @@ def email_read(ctx, message_id, save_dir, body_format, include_html, max_body_le
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Attach file(s)",
 )
-@click.option("--dry-run", is_flag=True, default=False, help="Simulate email sending without connecting or sending")
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate send without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm sending the email")
 @click.pass_context
 def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, body_type, attachments, dry_run, confirm):
+    """Send a new email."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
     if dry_run:
@@ -267,6 +270,7 @@ def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, bod
 @click.option("--confirm", is_flag=True, help="Confirm sending the reply")
 @click.pass_context
 def email_reply(ctx, message_id, body, body_file, reply_all, dry_run, confirm):
+    """Reply to an existing message."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
     if dry_run:
@@ -310,6 +314,7 @@ def email_reply(ctx, message_id, body, body_file, reply_all, dry_run, confirm):
 @click.option("--confirm", is_flag=True, help="Confirm forwarding the email")
 @click.pass_context
 def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
+    """Forward an existing message."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file, required=False) or ""
     if dry_run:
@@ -363,6 +368,7 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
 )
 @click.pass_context
 def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_attachments, with_preview):
+    """Search messages with server-side filters."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         start_dt = _parse_search_date(start, is_end=False) if start else None
@@ -432,6 +438,7 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
 @click.argument("message_id")
 @click.pass_context
 def email_mark_read(ctx, message_id):
+    """Mark a message as read."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -446,6 +453,7 @@ def email_mark_read(ctx, message_id):
 @click.argument("message_id")
 @click.pass_context
 def email_mark_unread(ctx, message_id):
+    """Mark a message as unread."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -461,6 +469,7 @@ def email_mark_unread(ctx, message_id):
 @click.option("--folder", "folder_name", required=True, help="Destination well-known name, path, or folder id")
 @click.pass_context
 def email_move(ctx, message_id, folder_name):
+    """Move a message to another folder."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     folder_name = _require_folder_arg(folder_name)
     try:
@@ -486,6 +495,7 @@ def email_move(ctx, message_id, folder_name):
 @click.option("--confirm", is_flag=True, help="Confirm deletion")
 @click.pass_context
 def email_delete(ctx, message_id, permanent, dry_run, confirm):
+    """Delete a message (soft delete by default, permanent with --permanent)."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     if dry_run:
         formatter.success(
@@ -554,6 +564,7 @@ def email_delete(ctx, message_id, permanent, dry_run, confirm):
 )
 @click.pass_context
 def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, max_events):
+    """Stream folder changes in the foreground."""
     folder_name = _require_folder_arg(folder_name)
     if duration_seconds is None and not forever:
         raise CliError(

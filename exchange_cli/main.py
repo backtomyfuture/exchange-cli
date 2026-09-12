@@ -1,4 +1,5 @@
 import importlib
+import logging
 import sys
 import time
 import uuid
@@ -8,6 +9,9 @@ import click
 from . import __version__
 from .core.errors import CliError, classify_exception
 from .core.output import OutputFormatter, set_current_request_context
+
+# Suppress third-party warnings from exchangelib on stderr by default (e.g. paging offset warnings)
+logging.getLogger("exchangelib").setLevel(logging.ERROR)
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -222,6 +226,8 @@ def cli(ctx, fmt, config_path, account_email, request_id, verbose):
     ctx.obj["verbose"] = verbose
     ctx.obj["request_id"] = request_id or _request_id_from_args([])
     ctx.obj["start_time"] = time.monotonic()
+    if verbose:
+        logging.getLogger("exchangelib").setLevel(logging.DEBUG)
 
 
 def main():

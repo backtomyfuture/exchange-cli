@@ -36,6 +36,7 @@ def draft(ctx):
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Number of drafts to return")
 @click.pass_context
 def draft_list(ctx, limit):
+    """List draft messages."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
@@ -67,6 +68,7 @@ def draft_list(ctx, limit):
 )
 @click.pass_context
 def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_file, body_type, attachments):
+    """Create a draft message without sending."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
     try:
@@ -93,6 +95,7 @@ def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_file, body_type, a
 @click.option("--confirm", is_flag=True, help="Confirm sending the draft")
 @click.pass_context
 def draft_send(ctx, draft_id, dry_run, confirm):
+    """Send an existing draft message."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     if dry_run:
         formatter.success(
@@ -124,6 +127,7 @@ def draft_send(ctx, draft_id, dry_run, confirm):
 @click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
 def draft_delete(ctx, draft_id, dry_run, confirm):
+    """Delete a draft message."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     if dry_run:
         formatter.success(

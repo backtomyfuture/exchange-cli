@@ -1,8 +1,29 @@
 #!/usr/bin/env node
 
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+
+const startTime = process.hrtime.bigint ? process.hrtime.bigint() : Date.now();
+
+function getRequestId() {
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith('--request-id=')) {
+      const val = arg.slice('--request-id='.length).trim();
+      if (val) return val;
+    }
+    if (arg === '--request-id' && i + 1 < process.argv.length) {
+      const val = process.argv[i + 1].trim();
+      if (val) return val;
+    }
+  }
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return '00000000-0000-0000-0000-000000000000';
+}
 
 const PLATFORM_PACKAGES = {
   'darwin-arm64': '@backtomyfuture/exchange-cli-darwin-arm64',
@@ -24,12 +45,21 @@ function renderError(message, code = 'BINARY_NOT_FOUND', exitCode = 1) {
   if (isText) {
     console.error(`Error [${code}]: ${message}`);
   } else {
+    const requestId = getRequestId();
+    const elapsedMs = process.hrtime.bigint
+      ? Number(process.hrtime.bigint() - startTime) / 1e6
+      : Date.now() - startTime;
     console.log(
       JSON.stringify({
         ok: false,
         error: message,
         code: code,
         retryable: false,
+        request_id: requestId,
+        meta: {
+          request_id: requestId,
+          elapsed_ms: Math.round(elapsedMs * 100) / 100,
+        },
       })
     );
   }
@@ -43,6 +73,15 @@ function getBinaryPath() {
       renderError(
         `exchange-cli: binary not found at EXCHANGE_CLI_BINARY: ${customBin}`,
         'BINARY_NOT_FOUND',
+        1
+      );
+    }
+    try {
+      fs.accessSync(customBin, fs.constants.X_OK);
+    } catch {
+      renderError(
+        `exchange-cli: binary at EXCHANGE_CLI_BINARY is not executable: ${customBin}`,
+        'BINARY_SPAWN_FAILED',
         1
       );
     }
@@ -92,7 +131,7 @@ try {
   child.on('error', (err) => {
     renderError(
       `exchange-cli: failed to spawn binary: ${err.message}`,
-      'BINARY_NOT_FOUND',
+      'BINARY_SPAWN_FAILED',
       1
     );
   });
