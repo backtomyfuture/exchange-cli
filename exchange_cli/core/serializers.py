@@ -60,20 +60,50 @@ def serialize_email_summary(message, include_body_preview: bool = True):
     }
 
 
-def serialize_email_detail(message, body_format="markdown", fields: list[str] | None = None):
+def serialize_email_detail(
+    message,
+    body_format="markdown",
+    fields: list[str] | None = None,
+    include_html: bool = False,
+    max_body_length: int | None = None,
+):
     result = serialize_email_summary(message)
     need_bodies = fields is None or any(
-        field in fields for field in ("body", "body_html", "unique_body_html", "body_format")
+        field in fields
+        for field in (
+            "body",
+            "body_html",
+            "unique_body_html",
+            "body_format",
+            "body_length",
+            "body_truncated",
+        )
     )
     if need_bodies:
         raw_body = _safe_str(message.body)
         if body_format == "markdown" and raw_body:
-            result["body"] = html_to_markdown(raw_body)
+            body_content = html_to_markdown(raw_body)
         else:
-            result["body"] = raw_body
+            body_content = raw_body or ""
+
+        body_len = len(body_content) if body_content else 0
+        truncated = False
+        if max_body_length is not None and max_body_length > 0 and body_len > max_body_length:
+            body_content = body_content[:max_body_length]
+            truncated = True
+
+        result["body"] = body_content
         result["body_format"] = body_format
-        result["body_html"] = raw_body
-        result["unique_body_html"] = _safe_str(getattr(message, "unique_body", None))
+        result["body_length"] = body_len
+        result["body_truncated"] = truncated
+
+        want_html = include_html or (
+            fields is not None and any(f in fields for f in ("body_html", "unique_body_html"))
+        )
+        if want_html:
+            result["body_html"] = raw_body
+            result["unique_body_html"] = _safe_str(getattr(message, "unique_body", None))
+
     result["conversation_id"] = _serialize_conversation_id(getattr(message, "conversation_id", None))
     result["internet_message_id"] = _safe_str(getattr(message, "message_id", None))
     result["bcc"] = _serialize_mailbox_list(message.bcc_recipients)

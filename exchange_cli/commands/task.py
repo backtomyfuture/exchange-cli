@@ -134,10 +134,24 @@ def task_complete(ctx, task_id):
 
 @task.command("delete")
 @click.argument("task_id")
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate deleting task without connecting or deleting")
 @click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
-def task_delete(ctx, task_id, confirm):
+def task_delete(ctx, task_id, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "task.delete",
+                "preview": {
+                    "task_id": task_id,
+                    "permanent": True,
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="task.delete")
     try:
         account = get_connection(ctx)

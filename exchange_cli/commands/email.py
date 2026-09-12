@@ -1,7 +1,7 @@
 """exchange-cli email {list, read, send, reply, forward, search, mark-read, move, delete, watch}."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -46,21 +46,36 @@ def _find_message(account, message_id: str):
 
 
 def _parse_search_date(value: str, *, is_end: bool) -> EWSDateTime:
-    timezone = EWSTimeZone.localzone()
+    val = value.strip()
+    iso_val = val.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(iso_val)
+        has_time = "T" in val or " " in val
+        if is_end and not has_time:
+            parsed = parsed.replace(hour=23, minute=59, second=59)
+        if parsed.tzinfo is not None:
+            return EWSDateTime.from_datetime(parsed.astimezone(timezone.utc))
+        return EWSDateTime.from_datetime(parsed).replace(tzinfo=EWSTimeZone.localzone())
+    except ValueError:
+        pass
+
+    timezone_local = EWSTimeZone.localzone()
     for fmt, has_time in (
         ("%Y-%m-%d %H:%M:%S", True),
         ("%Y-%m-%d %H:%M", True),
         ("%Y-%m-%d", False),
     ):
         try:
-            parsed = datetime.strptime(value, fmt)
+            parsed = datetime.strptime(val, fmt)
             if is_end and not has_time:
                 parsed = parsed.replace(hour=23, minute=59, second=59)
-            return EWSDateTime.from_datetime(parsed).replace(tzinfo=timezone)
+            return EWSDateTime.from_datetime(parsed).replace(tzinfo=timezone_local)
         except ValueError:
             continue
 
-    raise click.BadParameter(f"Invalid date: {value}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM[:SS].")
+    raise click.BadParameter(
+        f"Invalid date: {value}. Use RFC 3339 / ISO format (e.g. 2026-09-12T10:00:00Z) or YYYY-MM-DD [HH:MM[:SS]]."
+    )
 
 
 def _require_folder_arg(folder_name: str) -> str:
@@ -132,19 +147,37 @@ def email_list(ctx, folder_name, limit, unread, with_preview):
     help="Body output format (default: markdown)",
 )
 @click.option(
+    "--include-html",
+    is_flag=True,
+    default=False,
+    help="Include raw body_html and unique_body_html in output",
+)
+@click.option(
+    "--max-body-length",
+    default=None,
+    type=click.IntRange(1),
+    help="Truncate body to maximum number of characters",
+)
+@click.option(
     "--fields",
     default=None,
     help="Comma-separated fields to include",
 )
 @click.pass_context
-def email_read(ctx, message_id, save_dir, body_format, fields):
+def email_read(ctx, message_id, save_dir, body_format, include_html, max_body_length, fields):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         selected = parse_field_list(fields, allowed=EMAIL_DETAIL_FIELD_CHOICES)
         account = get_connection(ctx)
         message = require_message(account, message_id)
         saved_paths = save_file_attachments(save_dir, message.attachments) if save_dir else []
-        result = serialize_email_detail(message, body_format=body_format, fields=selected)
+        result = serialize_email_detail(
+            message,
+            body_format=body_format,
+            fields=selected,
+            include_html=include_html,
+            max_body_length=max_body_length,
+        )
         if save_dir:
             result["saved_attachments"] = [str(path) for path in saved_paths]
         formatter.success(result)
@@ -172,11 +205,34 @@ def email_read(ctx, message_id, save_dir, body_format, fields):
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Attach file(s)",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate email sending without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm sending the email")
 @click.pass_context
-def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, body_type, attachments, confirm):
+def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, body_type, attachments, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
+    if dry_run:
+        attachment_previews = [
+            {"name": p.name, "size": p.stat().st_size if p.is_file() else None}
+            for p in attachments
+        ]
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.send",
+                "preview": {
+                    "to": list(to_addrs),
+                    "cc": list(cc_addrs),
+                    "bcc": list(bcc_addrs),
+                    "subject": subject,
+                    "body_type": body_type,
+                    "body_length": len(body),
+                    "attachments": attachment_previews,
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="email.send")
 
     try:
@@ -207,11 +263,26 @@ def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, bod
     help="Read body from file",
 )
 @click.option("--all", "reply_all", is_flag=True, default=False, help="Reply to all")
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate reply without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm sending the reply")
 @click.pass_context
-def email_reply(ctx, message_id, body, body_file, reply_all, confirm):
+def email_reply(ctx, message_id, body, body_file, reply_all, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.reply",
+                "preview": {
+                    "message_id": message_id,
+                    "reply_all": reply_all,
+                    "body_length": len(body),
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="email.reply")
     try:
         account = get_connection(ctx)
@@ -235,11 +306,26 @@ def email_reply(ctx, message_id, body, body_file, reply_all, confirm):
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Read body from file",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate forward without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm forwarding the email")
 @click.pass_context
-def email_forward(ctx, message_id, to_addrs, body, body_file, confirm):
+def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file, required=False) or ""
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.forward",
+                "preview": {
+                    "message_id": message_id,
+                    "to": list(to_addrs),
+                    "body_length": len(body),
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="email.forward")
     try:
         account = get_connection(ctx)
@@ -265,8 +351,11 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, confirm):
     help="Well-known name, folder path, or folder id",
 )
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Max results")
-@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
-@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--start", default=None, help="Start date/time (YYYY-MM-DD or RFC 3339)")
+@click.option("--end", default=None, help="End date/time (YYYY-MM-DD or RFC 3339)")
+@click.option("--from", "from_addr", default=None, help="Filter by sender (name or email)")
+@click.option("--to", "to_addr", default=None, help="Filter by recipient (name or email)")
+@click.option("--has-attachments", is_flag=True, default=False, help="Only return emails with attachments")
 @click.option(
     "--with-preview",
     is_flag=True,
@@ -274,7 +363,7 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, confirm):
     help="Include body_preview (slower for large result sets)",
 )
 @click.pass_context
-def email_search(ctx, query, folder_name, limit, start, end, with_preview):
+def email_search(ctx, query, folder_name, limit, start, end, from_addr, to_addr, has_attachments, with_preview):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         start_dt = _parse_search_date(start, is_end=False) if start else None
@@ -288,6 +377,14 @@ def email_search(ctx, query, folder_name, limit, start, end, with_preview):
             criteria &= Q(datetime_received__gte=start_dt)
         if end_dt:
             criteria &= Q(datetime_received__lte=end_dt)
+        if from_addr:
+            from_addr_clean = from_addr.strip()
+            criteria &= (Q(sender__icontains=from_addr_clean) | Q(author__icontains=from_addr_clean))
+        if to_addr:
+            to_addr_clean = to_addr.strip()
+            criteria &= Q(to_recipients__icontains=to_addr_clean)
+        if has_attachments:
+            criteria &= Q(has_attachments=True)
         queryset = folder.filter(criteria)
         projected = project_email_summary_fields(queryset, include_body_preview=with_preview)
         page, truncated = take_page(projected.order_by("-datetime_received"), limit)
@@ -351,10 +448,25 @@ def email_move(ctx, message_id, folder_name):
 @email.command("delete")
 @click.argument("message_id")
 @click.option("--permanent", is_flag=True, default=False, help="Permanently delete instead of moving to trash")
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate deletion without connecting or deleting")
 @click.option("--confirm", is_flag=True, help="Confirm deletion")
 @click.pass_context
-def email_delete(ctx, message_id, permanent, confirm):
+def email_delete(ctx, message_id, permanent, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.delete",
+                "preview": {
+                    "message_id": message_id,
+                    "permanent": permanent,
+                    "target": "permanent deletion" if permanent else "move to trash",
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="email.delete")
     try:
         account = get_connection(ctx)
@@ -395,14 +507,27 @@ def email_delete(ctx, message_id, permanent, confirm):
     help="Stop after this many seconds",
 )
 @click.option(
+    "--forever",
+    is_flag=True,
+    default=False,
+    help="Run indefinitely until interrupted (human interactive only)",
+)
+@click.option(
     "--max-events",
     default=None,
     type=click.IntRange(1, MAX_WATCH_EVENTS),
     help="Stop after this many mail events",
 )
 @click.pass_context
-def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, max_events):
+def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, max_events):
     folder_name = _require_folder_arg(folder_name)
+    if duration_seconds is None and not forever:
+        raise CliError(
+            "email watch requires either '--duration <seconds>' or '--forever' to prevent hanging agent sessions.",
+            code="WATCH_DURATION_REQUIRED",
+            exit_code=2,
+            retryable=False,
+        )
     click.echo(f"Watching folder '{folder_name}'. Press Ctrl+C to stop.", err=True)
     try:
         for event in foreground_watch_events(

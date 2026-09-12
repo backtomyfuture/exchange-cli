@@ -31,6 +31,8 @@ class TestConnectionManager:
         assert isinstance(mock_config.call_args.kwargs["retry_policy"], FailFast)
         assert mock_config.call_args.kwargs["max_connections"] == 2
         assert BaseProtocol.TIMEOUT == 30
+        from exchange_cli import __version__
+        assert BaseProtocol.USERAGENT == f"exchange-cli/{__version__}"
         assert account is mock_account.return_value
 
     @patch("exchange_cli.core.connection.Credentials")

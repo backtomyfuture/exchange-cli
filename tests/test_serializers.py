@@ -96,6 +96,21 @@ class TestSerializeEmailDetail:
         result = serialize_email_detail(msg)
         assert result["body"] == "Just plain text"
         assert result["body_format"] == "markdown"
+        assert "body_html" not in result
+
+    def test_include_html_includes_raw_bodies(self):
+        msg = _mock_message(body="<p>Hello</p>")
+        msg.unique_body = "<p>Unique</p>"
+        result = serialize_email_detail(msg, include_html=True)
+        assert result["body_html"] == "<p>Hello</p>"
+        assert result["unique_body_html"] == "<p>Unique</p>"
+
+    def test_max_body_length_truncation(self):
+        msg = _mock_message(body="1234567890")
+        result = serialize_email_detail(msg, max_body_length=5)
+        assert result["body"] == "12345"
+        assert result["body_truncated"] is True
+        assert result["body_length"] == 10
 
 
 class TestSerializeCalendarEvent:

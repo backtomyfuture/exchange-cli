@@ -32,6 +32,8 @@ EMAIL_DETAIL_FIELD_CHOICES = (
     "body_preview",
     "body",
     "body_format",
+    "body_length",
+    "body_truncated",
     "body_html",
     "unique_body_html",
     "conversation_id",

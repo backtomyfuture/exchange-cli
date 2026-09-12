@@ -36,6 +36,8 @@ exchange-cli --format text email list
 # 也支持人类习惯：
 exchange-cli email list --format text
 exchange-cli --config /path/to/config email list
+# 链路追踪（Agent 推荐每次调用透传或由 CLI 自动生成）：
+exchange-cli --request-id 12345-uuid email list
 ```
 
 ## 授权与安全规则
@@ -47,6 +49,9 @@ exchange-cli --config /path/to/config email list
 - `email delete`（默认移入回收站；`--permanent` 才永久删除）、`draft delete`、`calendar delete`、`task delete`
 - 带 `--attendees` 且会发邀请的 `calendar create`
 - `--notify all` 的 `calendar update` / `calendar delete`
+
+高危写操作安全预演（`--dry-run`）：
+以上写命令（`email send`、`email reply`、`email forward`、`email delete`、`calendar create`、`calendar delete`、`draft send`、`draft delete`、`task delete`）均支持 `--dry-run`。`--dry-run` 不会连接 Exchange 网络，不要求 `--confirm`，返回结构化预览（如附件大小、收件人列表、正文长度、是否需要 confirm），Agent 在向用户汇报前可用 `--dry-run` 预演校验入参。
 
 `CONFIRMATION_REQUIRED` 只表示缺少 CLI 参数，不代表用户已经授权。不要为了让命令成功而自行补上 `--confirm`。
 
@@ -104,15 +109,15 @@ exchange-cli config show
 自动化始终使用默认 JSON；`--format text` 仅供人工阅读。
 
 ```json
-{"ok": true, "data": {"id": "AAMk..."}}
-{"ok": true, "count": 2, "data": [{"id": "A"}, {"id": "B"}]}
-{"ok": false, "error": "...", "code": "CONNECTION_ERROR", "retryable": true}
+{"ok": true, "data": {"id": "AAMk..."}, "meta": {"request_id": "94cef4ee-...", "elapsed_ms": 12.34}}
+{"ok": true, "count": 2, "data": [{"id": "A"}, {"id": "B"}], "meta": {"request_id": "..."}}
+{"ok": false, "error": "...", "code": "CONNECTION_ERROR", "retryable": true, "request_id": "..."}
 ```
 
 处理规则：
 
-- 先判断 `ok`，再读取 `data` 或 `error`；列表数量读取 `count`。
-- 错误时读取 `code`、`retryable` 和可选 `details`，不要靠错误文本做控制流。
+- 先判断 `ok`，再读取 `data` 或 `error`；列表数量读取 `count`；耗时与请求追踪读取 `meta.elapsed_ms` 与 `meta.request_id`。
+- 错误时读取 `code`、`retryable`、`request_id` 和可选 `details`，不要靠错误文本做控制流。
 - 仅当 `retryable=true` 时做有限次数、带退避的重试。认证、配置、权限、输入、确认错误和 `WRITE_OUTCOME_UNKNOWN` 不要自动重试。
 - `NOT_FOUND` 时重新列出资源获取 ID，不要猜测 ID。
 - `CONFIG_KEY_MISSING` 或 `CONFIG_DECRYPT_FAILED` 时停止并请求用户处理；不要擅自删除或覆盖配置与密钥。
@@ -122,13 +127,15 @@ exchange-cli config show
 
 `email read MESSAGE_ID` 的 `data` 除基础邮件字段外，还会稳定返回以下详情字段：
 
-- `body`：按 `--body-format` 输出的正文；默认是 Markdown，`--body-format html` 时是 HTML。
-- `body_html`：完整原始 HTML 正文，不受 `--body-format` 影响。
-- `unique_body_html`：EWS 返回的本轮新增 HTML 正文；服务器未提供时为 `null`。它不能替代 `body_html`。
+- `body`：按 `--body-format` 输出的正文；默认是清洗后的 Markdown，`--body-format html` 时是 HTML。
+- `body_length`：正文实际字符长度。
+- `body_truncated`：布尔值，是否被 `--max-body-length` 截断。
+- `body_html`：完整原始 HTML 正文（默认省略以节省 Token，需传入 `--include-html` 或在 `--fields` 中指定）。
+- `unique_body_html`：EWS 返回的本轮新增 HTML 正文（需传入 `--include-html` 或在 `--fields` 中指定）。
 - `conversation_id`：Exchange 会话 ID；不可用时为 `null`。
 - `internet_message_id`：邮件的 RFC Message-ID（通常带尖括号）；不可用时为 `null`。
 
-`id` 是 EWS ItemId，不能替代 `internet_message_id`。`email list`、`email search` 与 `email watch` 仍只返回摘要，不承诺携带这些详情/会话字段。需要判断回复或转发的本轮变化时，先用 `email read` 获取 `unique_body_html`；其为 `null` 时再由调用方基于 `body_html` 做正文分界兜底。
+`id` 是 EWS ItemId，不能替代 `internet_message_id`。`email list`、`email search` 与 `email watch` 仍只返回摘要，不承诺携带这些详情/会话字段。需要判断回复或转发的本轮变化时，使用 `email read --include-html` 获取 `unique_body_html`；其为 `null` 时再由调用方基于 `body_html` 做正文分界兜底。
 
 ## 命令地图
 
@@ -148,7 +155,8 @@ exchange-cli config show
 
 - 邮件 `--folder` 接受 `inbox`、`sent`、`drafts`、`trash`、`junk`，也可以是文件夹路径或文件夹 ID。
 - 邮件、草稿、日历、任务和联系人的 `--limit` 范围为 `1..200`。列表结果带 `truncated`。
-- `email watch --backfill-minutes` 范围为 `1..1440`；可用 `--duration` 和 `--max-events` 停止。
+- `email watch` 必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。
+- `email search` 支持关键字 `query`、`--from` 发件人、`--to` 收件人、`--has-attachments` 仅含附件，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`。
 - `calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`。`--status` 在客户端筛选。
@@ -167,6 +175,8 @@ exchange-cli config show
 ```bash
 exchange-cli email list --folder inbox --unread --limit 20
 exchange-cli email read MESSAGE_ID
+exchange-cli email read MESSAGE_ID --max-body-length 1000
+exchange-cli email read MESSAGE_ID --include-html
 exchange-cli email read MESSAGE_ID --fields id,subject,body
 exchange-cli email read MESSAGE_ID --body-format html
 exchange-cli email read MESSAGE_ID --save-attachments ./downloads
@@ -180,11 +190,16 @@ exchange-cli email delete MESSAGE_ID --permanent --confirm
 
 ```bash
 exchange-cli email search "关键词" --folder inbox --start "YYYY-MM-DD" --end "YYYY-MM-DD"
+# 多维度精准搜索与 RFC 3339 时区支持：
+exchange-cli email search "发票" --from "finance@example.com" --has-attachments --start "2026-09-01T00:00:00Z"
 ```
 
-发送、回复和转发；执行前先完成用户确认：
+发送、回复和转发；执行前先完成用户确认（或先用 `--dry-run` 预演）：
 
 ```bash
+# 安全预演（不发网络请求，免 confirm）：
+exchange-cli email send --to "user@example.com" --subject "主题" --body "正文" --dry-run
+# 获得用户明确授权后正式发送：
 exchange-cli email send --to "user@example.com" --subject "主题" --body-file ./body.txt --confirm
 exchange-cli email reply MESSAGE_ID --body "回复内容" --all --confirm
 exchange-cli email forward MESSAGE_ID --to "user@example.com" --body "补充说明" --confirm
@@ -194,6 +209,7 @@ exchange-cli email forward MESSAGE_ID --to "user@example.com" --body "补充说�
 
 ```bash
 exchange-cli draft create --to "user@example.com" --subject "主题" --body "正文"
+exchange-cli draft send DRAFT_ID --dry-run
 exchange-cli draft send DRAFT_ID --confirm
 ```
 
@@ -219,7 +235,8 @@ exchange-cli contact search "张三" --limit 20
 ## 实时监听
 
 ```bash
-exchange-cli email watch --folder inbox --backfill-minutes 10 --duration 60 --max-events 20
+# Agent 必须指定 --duration 或 --forever，避免子进程无响应死锁：
+exchange-cli email watch --folder inbox --duration 60 --max-events 20
 ```
 
 输出是 NDJSON，每行仍使用 `{"ok": true, "data": ...}` 外层。不要把所有 `ok=true` 都当成新邮件，应检查 `data.event_type`：

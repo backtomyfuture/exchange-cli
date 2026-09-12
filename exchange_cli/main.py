@@ -1,11 +1,13 @@
 import importlib
 import sys
+import time
+import uuid
 
 import click
 
 from . import __version__
 from .core.errors import CliError, classify_exception
-from .core.output import OutputFormatter
+from .core.output import OutputFormatter, set_current_request_context
 
 _CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -34,13 +36,28 @@ def _format_from_args(args) -> str:
     return "json"
 
 
-GLOBAL_VALUE_OPTIONS = {"--format", "--config", "--account"}
+def _request_id_from_args(args) -> str:
+    args = list(args or ())
+    for index, arg in enumerate(args):
+        if arg.startswith("--request-id="):
+            val = arg.partition("=")[2].strip()
+            if val:
+                return val
+        if arg == "--request-id" and index + 1 < len(args):
+            val = args[index + 1].strip()
+            if val:
+                return val
+    return str(uuid.uuid4())
+
+
+GLOBAL_VALUE_OPTIONS = {"--format", "--config", "--account", "--request-id"}
 GLOBAL_FLAG_OPTIONS = {"--verbose", "-v"}
 KNOWN_PARAMETRIZED_OPTIONS = {
-    "--to", "--cc", "--bcc", "--subject", "--body", "--body-file",
+    "--to", "--from", "--cc", "--bcc", "--subject", "--body", "--body-file",
     "--body-format", "--fields", "--save-attachments", "--folder",
     "--limit", "--start", "--end", "--location", "--attendees",
     "--notify", "--due", "--status", "--ca-bundle", "--preset",
+    "--max-body-length",
 }
 
 
@@ -122,33 +139,39 @@ class LazyGroup(click.Group):
 
         raw_args = list(sys.argv[1:] if args is None else args)
         normalized_args = _hoist_global_args(raw_args)
+        req_id = _request_id_from_args(raw_args)
+        start_t = time.monotonic()
+        set_current_request_context(req_id, start_t)
         try:
-            return super().main(
-                args=normalized_args,
-                prog_name=prog_name,
-                complete_var=complete_var,
-                standalone_mode=False,
-                windows_expand_args=windows_expand_args,
-                **extra,
-            )
-        except click.ClickException as exc:
-            cli_error = CliError(exc.format_message(), code="INVALID_INPUT", exit_code=exc.exit_code)
-        except click.Abort:
-            cli_error = CliError("Operation aborted.", code="ABORTED", exit_code=1)
-        except Exception as exc:
-            cli_error = classify_exception(exc)
+            try:
+                return super().main(
+                    args=normalized_args,
+                    prog_name=prog_name,
+                    complete_var=complete_var,
+                    standalone_mode=False,
+                    windows_expand_args=windows_expand_args,
+                    **extra,
+                )
+            except click.ClickException as exc:
+                cli_error = CliError(exc.format_message(), code="INVALID_INPUT", exit_code=exc.exit_code)
+            except click.Abort:
+                cli_error = CliError("Operation aborted.", code="ABORTED", exit_code=1)
+            except Exception as exc:
+                cli_error = classify_exception(exc)
 
-        formatter = OutputFormatter(_format_from_args(raw_args))
-        formatter.error(
-            cli_error.message,
-            code=cli_error.code,
-            retryable=cli_error.retryable,
-            details=cli_error.details,
-            outcome=cli_error.outcome,
-        )
-        if standalone_mode:
-            raise SystemExit(cli_error.exit_code)
-        return cli_error.exit_code
+            formatter = OutputFormatter(_format_from_args(raw_args), request_id=req_id, start_time=start_t)
+            formatter.error(
+                cli_error.message,
+                code=cli_error.code,
+                retryable=cli_error.retryable,
+                details=cli_error.details,
+                outcome=cli_error.outcome,
+            )
+            if standalone_mode:
+                raise SystemExit(cli_error.exit_code)
+            return cli_error.exit_code
+        finally:
+            set_current_request_context(None, None)
 
 
 @click.group(cls=LazyGroup, context_settings=_CONTEXT_SETTINGS)
@@ -173,9 +196,15 @@ class LazyGroup(click.Group):
     default=None,
     help="Compatibility assertion; must match the configured single account",
 )
+@click.option(
+    "--request-id",
+    "request_id",
+    default=None,
+    help="Client-assigned tracking UUID for Exchange requests",
+)
 @click.option("--verbose", is_flag=True, default=False, help="Verbose output to stderr")
 @click.pass_context
-def cli(ctx, fmt, config_path, account_email, verbose):
+def cli(ctx, fmt, config_path, account_email, request_id, verbose):
     """exchange-cli - Exchange Web Services CLI for AI agents.
 
     \b
@@ -191,6 +220,8 @@ def cli(ctx, fmt, config_path, account_email, verbose):
     ctx.obj["config_path"] = config_path
     ctx.obj["account_email"] = account_email
     ctx.obj["verbose"] = verbose
+    ctx.obj["request_id"] = request_id or _request_id_from_args([])
+    ctx.obj["start_time"] = time.monotonic()
 
 
 def main():

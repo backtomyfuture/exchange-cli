@@ -16,6 +16,9 @@ from urllib3.exceptions import InsecureRequestWarning
 
 from .config import ConfigManager
 from .errors import CliError
+from .. import __version__
+
+BaseProtocol.USERAGENT = f"exchange-cli/{__version__}"
 
 ERROR_CODES = {
     "CONFIG_NOT_FOUND": "No configuration found. Run: exchange-cli config init",

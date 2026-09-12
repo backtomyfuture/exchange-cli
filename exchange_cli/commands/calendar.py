@@ -108,9 +108,10 @@ def calendar_list(ctx, start, end, limit):
     type=click.Choice(MEETING_NOTIFY_CHOICES, case_sensitive=False),
     help="Meeting invitation behaviour when attendees are set",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate event creation without connecting or creating")
 @click.option("--confirm", is_flag=True, help="Confirm sending meeting invitations when attendees are set")
 @click.pass_context
-def calendar_create(ctx, subject, start, end, location, body, attendees, notify, confirm):
+def calendar_create(ctx, subject, start, end, location, body, attendees, notify, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         start_dt = _parse_datetime(start)
@@ -120,6 +121,24 @@ def calendar_create(ctx, subject, start, end, location, body, attendees, notify,
             [address.strip() for address in attendees.split(",") if address.strip()] if attendees else []
         )
         notify = notify.lower()
+        if dry_run:
+            formatter.success(
+                {
+                    "dry_run": True,
+                    "action": "calendar.create",
+                    "preview": {
+                        "subject": subject,
+                        "start": start_dt.isoformat() if hasattr(start_dt, "isoformat") else str(start_dt),
+                        "end": end_dt.isoformat() if hasattr(end_dt, "isoformat") else str(end_dt),
+                        "location": location,
+                        "body_length": len(body),
+                        "attendees": attendee_addresses,
+                        "notify": notify,
+                        "requires_confirm": bool(attendee_addresses and notify != "none"),
+                    },
+                }
+            )
+            return
         if attendee_addresses and notify != "none":
             require_confirmation(confirm, action="calendar.create_with_attendees")
         account = get_connection(ctx)
@@ -224,11 +243,26 @@ def calendar_update(ctx, event_id, subject, start, end, location, notify, confir
     type=click.Choice(MEETING_NOTIFY_CHOICES, case_sensitive=False),
     help="Whether to send cancellation notices",
 )
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate event deletion without connecting or deleting")
 @click.option("--confirm", is_flag=True, help="Confirm deletion")
 @click.pass_context
-def calendar_delete(ctx, event_id, notify, confirm):
+def calendar_delete(ctx, event_id, notify, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     notify = notify.lower()
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "calendar.delete",
+                "preview": {
+                    "event_id": event_id,
+                    "notify": notify,
+                    "permanent": True,
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="calendar.delete")
     if notify != "none":
         require_confirmation(confirm, action="calendar.delete_with_notice")

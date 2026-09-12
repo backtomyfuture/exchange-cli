@@ -9,12 +9,12 @@ def test_click_validation_uses_json_contract(runner):
 
     assert result.exit_code == 2
     assert result.stderr == ""
-    assert json.loads(result.stdout) == {
-        "ok": False,
-        "error": "Missing option '--to'.",
-        "code": "INVALID_INPUT",
-        "retryable": False,
-    }
+    data = json.loads(result.stdout)
+    assert data["ok"] is False
+    assert data["error"] == "Missing option '--to'."
+    assert data["code"] == "INVALID_INPUT"
+    assert data["retryable"] is False
+    assert "request_id" in data and data["request_id"]
 
 
 def test_click_validation_respects_text_format(runner):
@@ -37,12 +37,12 @@ def test_missing_config_uses_json_contract(runner, tmp_path):
 
     assert result.exit_code == 1
     assert result.stderr == ""
-    assert json.loads(result.stdout) == {
-        "ok": False,
-        "error": "No configuration found. Run: exchange-cli config init",
-        "code": "CONFIG_NOT_FOUND",
-        "retryable": False,
-    }
+    data = json.loads(result.stdout)
+    assert data["ok"] is False
+    assert data["error"] == "No configuration found. Run: exchange-cli config init"
+    assert data["code"] == "CONFIG_NOT_FOUND"
+    assert data["retryable"] is False
+    assert "request_id" in data and data["request_id"]
 
 
 def test_help_remains_human_readable_success(runner):
@@ -83,7 +83,7 @@ def test_schema_lists_commands(runner):
     names = {item["name"] for item in payload["data"]["commands"]}
     assert "email.send" in names
     assert "contact.resolve" in names
-    assert payload["data"]["schema_version"] == 1
+    assert payload["data"]["schema_version"] == 2
 
 
 def test_schema_single_command(runner):
@@ -94,6 +94,25 @@ def test_schema_single_command(runner):
     assert payload["name"] == "email.send"
     assert payload["write"] is True
     assert payload["confirm"] is True
+    assert payload["effect"] == "external_send"
+    assert payload["confirmation"] == "required"
+    assert payload["retry"] == "never_on_unknown_outcome"
+    option_names = {opt["name"] for opt in payload["options"]}
+    assert "--to" in option_names
+    assert "--confirm" in option_names
+
+
+def test_schema_command_with_arguments(runner):
+    result = runner.invoke(cli, ["schema", "email.read"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)["data"]
+    assert payload["name"] == "email.read"
+    assert payload["write"] is False
+    assert any(arg["name"] == "message_id" for arg in payload["arguments"])
+    option_names = {opt["name"] for opt in payload["options"]}
+    assert "--include-html" in option_names
+    assert "--max-body-length" in option_names
 
 
 def test_trailing_format_option_is_hoisted(runner):
@@ -123,3 +142,19 @@ def test_trailing_format_equal_syntax_is_hoisted(runner):
 
     assert result.exit_code == 2
     assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
+
+
+def test_explicit_request_id_in_error(runner):
+    result = runner.invoke(cli, ["--request-id", "custom-req-123", "email", "send"])
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["request_id"] == "custom-req-123"
+
+
+def test_explicit_request_id_in_schema_success(runner):
+    result = runner.invoke(cli, ["--request-id", "req-schema-456", "schema", "email.send"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["meta"]["request_id"] == "req-schema-456"
+    assert "elapsed_ms" in data["meta"]
+

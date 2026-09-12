@@ -162,10 +162,36 @@ class TestEmailRead:
 
         assert result.exit_code == 0
         data = json.loads(result.output)["data"]
-        assert data["body_html"] == "<html><body><p>Full thread body</p></body></html>"
-        assert data["unique_body_html"] == "<html><body><p>Current reply only</p></body></html>"
+        assert "body_html" not in data
+        assert "unique_body_html" not in data
         assert data["conversation_id"] == "AAQkAGconversation"
         assert data["internet_message_id"] == "<reply-42@example.com>"
+
+    def test_read_with_include_html(self, runner, mock_conn):
+        message = _mock_message()
+        message.body = "<html><body><p>Full thread body</p></body></html>"
+        message.unique_body = "<html><body><p>Current reply only</p></body></html>"
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "read", "AAMk123", "--include-html"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)["data"]
+        assert data["body_html"] == "<html><body><p>Full thread body</p></body></html>"
+        assert data["unique_body_html"] == "<html><body><p>Current reply only</p></body></html>"
+
+    def test_read_with_max_body_length(self, runner, mock_conn):
+        message = _mock_message()
+        message.body = "A" * 200
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "read", "AAMk123", "--max-body-length", "50"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)["data"]
+        assert len(data["body"]) == 50
+        assert data["body_truncated"] is True
+        assert data["body_length"] == 200
 
     def test_read_not_found(self, runner, mock_conn):
         missing = CliError("Message not found: NONEXISTENT", code="NOT_FOUND")
@@ -324,6 +350,34 @@ class TestEmailSearch:
         result = runner.invoke(cli, ["email", "search", "quarterly report"])
         assert result.exit_code == 0
 
+    def test_search_with_advanced_filters(self, runner, mock_conn):
+        mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[]
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "email",
+                "search",
+                "quarterly report",
+                "--from",
+                "alice@example.com",
+                "--to",
+                "bob@example.com",
+                "--has-attachments",
+                "--start",
+                "2024-07-15T10:00:00Z",
+                "--end",
+                "2024-07-16T18:00:00+08:00",
+            ],
+        )
+        assert result.exit_code == 0
+        call_args = mock_conn.inbox.filter.call_args[0]
+        q_expr = str(call_args[0])
+        assert "sender icontains 'alice@example.com'" in q_expr
+        assert "to_recipients icontains 'bob@example.com'" in q_expr
+        assert "has_attachments == True" in q_expr
+
     def test_search_invalid_start_date_returns_invalid_input(self, runner, mock_conn):
         result = runner.invoke(cli, ["email", "search", "quarterly report", "--start", "2024/07/01"])
         assert result.exit_code != 0
@@ -370,20 +424,58 @@ class TestEmailSearchDateParsing:
         assert parsed.minute == 59
         assert parsed.second == 59
 
+    def test_rfc3339_utc_date_parsed_correctly(self):
+        parsed = _parse_search_date("2024-07-15T10:30:00Z", is_end=False)
+        assert parsed.year == 2024
+        assert parsed.month == 7
+        assert parsed.day == 15
+        assert parsed.hour == 10
+        assert parsed.minute == 30
+        assert str(parsed.tzinfo) == "UTC"
+
+    def test_rfc3339_offset_date_parsed_correctly(self):
+        parsed = _parse_search_date("2024-07-15T18:30:00+08:00", is_end=False)
+        assert parsed.year == 2024
+        assert parsed.month == 7
+        assert parsed.day == 15
+        assert parsed.hour == 10
+        assert parsed.minute == 30
+        assert str(parsed.tzinfo) == "UTC"
+
     def test_invalid_date_raises_bad_parameter(self):
         with pytest.raises(click.BadParameter):
-            _parse_search_date("15-07-2024", is_end=False)
+            _parse_search_date("invalid-date-string", is_end=False)
 
 
 class TestEmailWatch:
-    def test_watch_runs_in_foreground_and_emits_ndjson(self, runner):
+    def test_watch_requires_duration_or_forever(self, runner):
+        result = runner.invoke(cli, ["email", "watch"])
+        assert result.exit_code == 2
+        data = json.loads(result.stdout)
+        assert data["ok"] is False
+        assert data["code"] == "WATCH_DURATION_REQUIRED"
+
+    def test_watch_runs_with_duration_and_emits_ndjson(self, runner):
         event = {
             "event_type": "new_mail",
             "timestamp": "2024-07-15T10:30:00+00:00",
             "folder": "inbox",
         }
         with patch("exchange_cli.commands.email.foreground_watch_events", return_value=iter([event])):
-            result = runner.invoke(cli, ["email", "watch"])
+            result = runner.invoke(cli, ["email", "watch", "--duration", "60"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == {"ok": True, "data": event}
+        assert "Watching folder 'inbox'" in result.stderr
+
+    def test_watch_runs_with_forever_and_emits_ndjson(self, runner):
+        event = {
+            "event_type": "new_mail",
+            "timestamp": "2024-07-15T10:30:00+00:00",
+            "folder": "inbox",
+        }
+        with patch("exchange_cli.commands.email.foreground_watch_events", return_value=iter([event])):
+            result = runner.invoke(cli, ["email", "watch", "--forever"])
 
         assert result.exit_code == 0
         assert json.loads(result.stdout) == {"ok": True, "data": event}

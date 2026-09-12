@@ -1,8 +1,19 @@
 """Output formatting helpers for JSON and text modes."""
 
+import contextvars
 import json
 import sys
+import time
 from datetime import date, datetime
+from typing import Any
+
+_current_request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_request_id", default=None)
+_current_start_time: contextvars.ContextVar[float | None] = contextvars.ContextVar("current_start_time", default=None)
+
+
+def set_current_request_context(request_id: str | None, start_time: float | None = None) -> None:
+    _current_request_id.set(request_id)
+    _current_start_time.set(start_time)
 
 
 def _default_serializer(obj):
@@ -12,17 +23,39 @@ def _default_serializer(obj):
 
 
 class OutputFormatter:
-    def __init__(self, fmt: str = "json"):
+    def __init__(
+        self,
+        fmt: str = "json",
+        request_id: str | None = None,
+        start_time: float | None = None,
+    ):
         self.fmt = fmt
+        self.request_id = request_id or _current_request_id.get()
+        self.start_time = start_time if start_time is not None else _current_start_time.get()
+
+    @classmethod
+    def from_context(cls, ctx=None) -> "OutputFormatter":
+        if ctx is None or not getattr(ctx, "obj", None):
+            return cls()
+        return cls(
+            fmt=ctx.obj.get("fmt", "json"),
+            request_id=ctx.obj.get("request_id"),
+            start_time=ctx.obj.get("start_time"),
+        )
 
     def success(self, data, count: int | None = None, truncated: bool | None = None, file=None):
         handle = file or sys.stdout
         if self.fmt == "json":
-            payload = {"ok": True, "data": data}
+            payload: dict[str, Any] = {"ok": True, "data": data}
             if count is not None:
                 payload["count"] = count
             if truncated is not None:
                 payload["truncated"] = truncated
+            if self.request_id:
+                meta: dict[str, Any] = {"request_id": self.request_id}
+                if self.start_time is not None:
+                    meta["elapsed_ms"] = round((time.monotonic() - self.start_time) * 1000, 2)
+                payload["meta"] = meta
             json.dump(payload, handle, ensure_ascii=False, default=_default_serializer)
             handle.write("\n")
             return
@@ -40,7 +73,7 @@ class OutputFormatter:
     ):
         handle = file or sys.stdout
         if self.fmt == "json":
-            payload = {"ok": False, "error": message}
+            payload: dict[str, Any] = {"ok": False, "error": message}
             if code:
                 payload["code"] = code
             if retryable is not None:
@@ -49,6 +82,8 @@ class OutputFormatter:
                 payload["outcome"] = outcome
             if details:
                 payload["details"] = details
+            if self.request_id:
+                payload["request_id"] = self.request_id
             json.dump(payload, handle, ensure_ascii=False)
             handle.write("\n")
             return

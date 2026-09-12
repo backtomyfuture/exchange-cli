@@ -89,10 +89,23 @@ def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_file, body_type, a
 
 @draft.command("send")
 @click.argument("draft_id")
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate sending draft without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm sending the draft")
 @click.pass_context
-def draft_send(ctx, draft_id, confirm):
+def draft_send(ctx, draft_id, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "draft.send",
+                "preview": {
+                    "draft_id": draft_id,
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="draft.send")
     try:
         account = get_connection(ctx)
@@ -107,10 +120,24 @@ def draft_send(ctx, draft_id, confirm):
 
 @draft.command("delete")
 @click.argument("draft_id")
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate deleting draft without connecting or deleting")
 @click.option("--confirm", is_flag=True, help="Confirm permanent deletion")
 @click.pass_context
-def draft_delete(ctx, draft_id, confirm):
+def draft_delete(ctx, draft_id, dry_run, confirm):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "draft.delete",
+                "preview": {
+                    "draft_id": draft_id,
+                    "permanent": True,
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
     require_confirmation(confirm, action="draft.delete")
     try:
         account = get_connection(ctx)
