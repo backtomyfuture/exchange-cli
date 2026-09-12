@@ -379,8 +379,10 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
         if end_dt:
             criteria &= Q(datetime_received__lte=end_dt)
         from_resolved = None
-        if from_addr:
+        if from_addr is not None:
             from_addr_clean = from_addr.strip()
+            if not from_addr_clean:
+                raise CliError("From address cannot be empty.", code="INVALID_INPUT", exit_code=2)
             from_q = Q(sender__icontains=from_addr_clean) | Q(author__icontains=from_addr_clean)
             if "@" in from_addr_clean:
                 from_resolved = True
@@ -561,6 +563,8 @@ def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, m
             exit_code=2,
             retryable=False,
         )
+    account = get_account(ctx)
+    resolve_mail_folder(account, folder_name)
     click.echo(f"Watching folder '{folder_name}'. Press Ctrl+C to stop.", err=True)
     original_sigterm = None
     try:

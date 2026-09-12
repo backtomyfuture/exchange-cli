@@ -65,6 +65,9 @@ class TestDoctor:
         data = json.loads(result.stdout)
         assert data["ok"] is False
         assert data["code"] == "INSECURE_TLS"
+        assert data["retryable"] is False
+        assert "request_id" in data
+        assert "meta" in data and "elapsed_ms" in data["meta"]
         assert data["data"]["overall"] == "fail"
         assert data["data"]["checks"][1]["id"] == "tls_verification"
         assert data["data"]["checks"][1]["status"] == "fail"

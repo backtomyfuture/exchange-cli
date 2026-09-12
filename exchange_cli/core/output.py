@@ -83,7 +83,7 @@ class OutputFormatter:
         outcome: str | None = None,
         file=None,
     ):
-        handle = file or sys.stdout
+        handle = file or (sys.stdout if self.fmt == "json" else sys.stderr)
         if self.fmt == "json":
             payload: dict[str, Any] = {"ok": False, "error": message}
             if code:
@@ -122,13 +122,18 @@ class OutputFormatter:
 
         handle = file or sys.stdout
         if self.fmt == "json":
-            payload = {"ok": ok, "data": data}
+            payload: dict[str, Any] = {"ok": ok, "data": data}
             if not ok:
                 payload["error"] = error or "Doctor checks failed."
                 if code:
                     payload["code"] = code
-                if retryable is not None:
-                    payload["retryable"] = retryable
+                payload["retryable"] = retryable if retryable is not None else False
+                if self.request_id:
+                    payload["request_id"] = self.request_id
+                    meta: dict[str, Any] = {"request_id": self.request_id}
+                    if self.start_time is not None:
+                        meta["elapsed_ms"] = round((time.monotonic() - self.start_time) * 1000, 2)
+                    payload["meta"] = meta
             json.dump(payload, handle, ensure_ascii=False, default=_default_serializer)
             handle.write("\n")
             return

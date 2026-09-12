@@ -21,8 +21,8 @@ def test_click_validation_respects_text_format(runner):
     result = runner.invoke(cli, ["--format", "text", "email", "send"])
 
     assert result.exit_code == 2
-    assert result.stderr == ""
-    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
+    assert result.stdout == ""
+    assert result.stderr == "Error [INVALID_INPUT]: Missing option '--to'.\n"
 
 
 def test_missing_config_uses_json_contract(runner, tmp_path):
@@ -145,14 +145,14 @@ def test_format_text_honored_on_cli_error(runner):
     result = runner.invoke(cli, ["--format", "text", "email", "send"])
 
     assert result.exit_code == 2
-    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
+    assert result.stderr == "Error [INVALID_INPUT]: Missing option '--to'.\n"
 
 
 def test_trailing_format_option_is_hoisted(runner):
     result = runner.invoke(cli, ["email", "send", "--format", "text"])
 
     assert result.exit_code == 2
-    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
+    assert result.stderr == "Error [INVALID_INPUT]: Missing option '--to'.\n"
 
 
 def test_trailing_config_option_is_hoisted(runner, tmp_path):
@@ -174,7 +174,7 @@ def test_trailing_format_equal_syntax_is_hoisted(runner):
     result = runner.invoke(cli, ["email", "send", "--format=text"])
 
     assert result.exit_code == 2
-    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
+    assert result.stderr == "Error [INVALID_INPUT]: Missing option '--to'.\n"
 
 
 def test_explicit_request_id_in_error(runner):

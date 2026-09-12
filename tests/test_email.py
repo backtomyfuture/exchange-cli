@@ -612,3 +612,99 @@ class TestFolderResolution:
 
         assert resolve_mail_folder(account, "inbox/sub") is sub
         assert resolve_mail_folder(account, "收件箱/sub") is sub
+
+    def test_reject_path_traversal_and_dot_paths(self):
+        from exchange_cli.core.email_service import resolve_mail_folder
+        from exchange_cli.core.errors import CliError
+
+        account = MagicMock()
+        inbox = MagicMock()
+        account.inbox = inbox
+
+        traversal_cases = [
+            "..",
+            "../",
+            "inbox/../../",
+            "inbox/../..",
+            "..\\",
+            ".",
+            "./",
+            "inbox/..",
+            "收件箱/..",
+            "a/../..",
+            "/",
+            "//",
+        ]
+        for bad_path in traversal_cases:
+            with pytest.raises(CliError) as exc_info:
+                resolve_mail_folder(account, bad_path)
+            assert exc_info.value.code == "INVALID_FOLDER"
+            assert exc_info.value.exit_code == 2
+
+        # inbox/./ should normalize to inbox
+        assert resolve_mail_folder(account, "inbox/./") is inbox
+
+    def test_resolve_ews_id_containing_slash(self):
+        from exchange_cli.core.email_service import resolve_mail_folder
+
+        account = MagicMock()
+        calendar_folder = MagicMock()
+        calendar_folder.name = "日历"
+        ews_id_with_slash = "AQMkAGFmZTA0NzA3LTI5NTAtNDk3NC05/AAA=" + "A" * 40
+
+        account.root._folders_map = {ews_id_with_slash: calendar_folder}
+
+        assert resolve_mail_folder(account, ews_id_with_slash) is calendar_folder
+
+    def test_resolve_archive_alias_fallback_under_msg_folder_root(self):
+        from exchange_cli.core.email_service import resolve_mail_folder
+
+        account = MagicMock(spec=[])  # no archive attribute
+        msg_folder_root = MagicMock()
+        archive_folder = MagicMock()
+        archive_folder.name = "Archive"
+
+        msg_folder_root.__truediv__ = MagicMock(side_effect=lambda name: archive_folder if name == "Archive" else None)
+        account.msg_folder_root = msg_folder_root
+
+        assert resolve_mail_folder(account, "归档") is archive_folder
+        assert resolve_mail_folder(account, "archive") is archive_folder
+
+    def test_email_search_empty_from_addr_raises_invalid_input(self):
+        from click.testing import CliRunner
+
+        from exchange_cli.main import cli
+
+        runner = CliRunner()
+        with patch("exchange_cli.commands.email.get_account") as mock_get_acc:
+            account = MagicMock()
+            mock_get_acc.return_value = account
+            result = runner.invoke(cli, ["email", "search", "test", "--from", ""])
+            assert result.exit_code == 2
+            data = json.loads(result.output)
+            assert data["ok"] is False
+            assert data["code"] == "INVALID_INPUT"
+
+            result_whitespace = runner.invoke(cli, ["email", "search", "test", "--from", "   "])
+            assert result_whitespace.exit_code == 2
+            data_ws = json.loads(result_whitespace.output)
+            assert data_ws["ok"] is False
+            assert data_ws["code"] == "INVALID_INPUT"
+
+    def test_email_watch_invalid_folder_does_not_echo_banner(self):
+        from click.testing import CliRunner
+
+        from exchange_cli.main import cli
+
+        runner = CliRunner()
+        with patch("exchange_cli.commands.email.get_account") as mock_get_acc:
+            account = MagicMock()
+            mock_get_acc.return_value = account
+            result = runner.invoke(cli, ["email", "watch", "--folder", "..", "--duration", "3"])
+            assert result.exit_code == 2
+            assert "Watching folder" not in result.stderr
+            data = json.loads(result.stdout)
+            assert data["ok"] is False
+            assert data["code"] == "INVALID_FOLDER"
+
+

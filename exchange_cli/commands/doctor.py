@@ -63,7 +63,7 @@ def doctor(ctx, offline):
     config_path = ctx.obj.get("config_path")
     account_email = ctx.obj.get("account_email")
     config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
-    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    formatter = OutputFormatter.from_context(ctx)
 
     try:
         credentials = config_manager.get_account_credentials(account_email)
@@ -143,6 +143,7 @@ def doctor(ctx, offline):
                 ok=False,
                 error=failed.get("message", "Doctor checks failed."),
                 code=failed.get("code", "DIAGNOSTIC_FAILURE"),
+                retryable=False,
             )
             raise SystemExit(1)
         formatter.diagnostic({"overall": _overall_status(checks), "checks": checks})
@@ -164,6 +165,7 @@ def doctor(ctx, offline):
             ok=False,
             error=failed.get("message", "Doctor checks failed."),
             code=failed.get("code", "DIAGNOSTIC_FAILURE"),
+            retryable=False,
         )
         raise SystemExit(1)
     formatter.diagnostic({"overall": _overall_status(checks), "checks": checks})

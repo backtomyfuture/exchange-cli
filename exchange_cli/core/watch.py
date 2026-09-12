@@ -20,7 +20,6 @@ from .validation import (
     MAX_BACKFILL_MINUTES,
     MAX_WATCH_DURATION_SECONDS,
     MAX_WATCH_EVENTS,
-    normalize_folder,
     validate_bounded_int,
 )
 
@@ -273,7 +272,10 @@ def foreground_watch_events(
 
     config_manager = ConfigManager(config_dir=config_dir)
     config_manager.get_account_credentials(account_email)
-    folder_name = normalize_folder(folder_name)
+    if not isinstance(folder_name, str) or not folder_name.strip():
+        from .errors import CliError
+        raise CliError("Folder is required.", code="INVALID_FOLDER", exit_code=2)
+    folder_name = folder_name.strip()
     backfill_minutes = validate_bounded_int(
         backfill_minutes,
         field="backfill_minutes",

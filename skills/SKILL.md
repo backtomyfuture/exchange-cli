@@ -106,6 +106,7 @@ exchange-cli config show
 - `EXCHANGE_TIMEOUT_SECONDS`（默认 `30`，范围 `1..300`）
 - `EXCHANGE_CA_BUNDLE`（或 `REQUESTS_CA_BUNDLE`，企业私有 CA 证书路径）
 - `EXCHANGE_CLI_CONFIG`（配置目录）
+- `EXCHANGE_CLI_BINARY`（底层 Mach-O/ELF 二进制覆盖路径，供调试或自定义运行时使用）
 
 `EXCHANGE_SERVER` 应是主机域名（如 `mail.example.com`），不要使用裸 IP，避免引发证书域名不匹配（IP mismatch）。`EXCHANGE_NO_VERIFY_SSL=1` 会彻底关闭 TLS 证书校验，`exchange-cli doctor` 将判定为失败；生产环境请配置企业 CA 或使用正确域名。
 
@@ -123,7 +124,9 @@ exchange-cli config show
 
 - 先判断 `ok`，再读取 `data` 或 `error`；列表数量读取 `count`；耗时与请求追踪读取 `meta.elapsed_ms` 与 `meta.request_id`。
 - 错误时读取 `code`、`retryable`、`request_id`、`meta` 和可选 `details`，不要靠错误文本做控制流。
-- 常见错误码：`NOT_FOUND`（资源或文件夹不存在）、`INVALID_INPUT`（参数非法、空值或未通过校验）、`INVALID_FOLDER`（未传文件夹或格式不合法）、`WATCH_DURATION_REQUIRED`（watch 缺少时长或 --forever）、`INVALID_AUTH_TYPE`（不支持的认证模式）、`BINARY_NOT_FOUND`（二进制缺失）、`CONFIRMATION_REQUIRED`（写操作需 --confirm）、`AUTH_ERROR`、`PERMISSION_ERROR`、`TIMEOUT_ERROR`、`SERVER_BUSY`、`CONNECTION_ERROR`、`WRITE_OUTCOME_UNKNOWN`。
+- 常见错误码：`NOT_FOUND`（资源或文件夹不存在）、`INVALID_INPUT`（参数非法、空值或未通过校验）、`INVALID_FOLDER`（未传文件夹、路径穿越或格式不合法）、`WATCH_DURATION_REQUIRED`（watch 缺少时长或 --forever）、`INVALID_AUTH_TYPE`（不支持的认证模式）、`BINARY_NOT_FOUND`（二进制缺失）、`CONFIRMATION_REQUIRED`（写操作需 --confirm）、`INVALID_TIME_RANGE`（时间范围无效如 start > end）、`CA_BUNDLE_NOT_FOUND`（指定的 CA 证书文件不存在）、`INSECURE_TLS`（TLS 校验被显式关闭）、`CONFIG_INVALID`（配置参数超出合法取值）、`ACCOUNT_MISMATCH`（--account 校验不匹配）、`ATTACHMENT_EXISTS`（附件已存在且可能覆盖）、`AUTH_ERROR`、`PERMISSION_ERROR`、`TIMEOUT_ERROR`、`SERVER_BUSY`、`CONNECTION_ERROR`、`WRITE_OUTCOME_UNKNOWN`、`SERVER_ERROR`。
+  *注意*：`exchange-cli schema` 中各命令声明的 `error_codes` 列表为提示性列表，非完整严格白名单；所有错误均严格遵守包含 `ok: false`、`code`、`error`、`retryable`、`request_id` 与 `meta` 的标准结构化错误信封。
+- 自动化始终只读取消费 `stdout` 中的 JSON 输出；`stderr` 仅供人类可读状态提示或底层第三方库警告，自动化流程切勿混用。
 - 仅当 `retryable=true` 时做有限次数、带退避的重试。认证、配置、权限、输入、确认错误和 `WRITE_OUTCOME_UNKNOWN` 不要自动重试。
 - `NOT_FOUND` 时重新列出资源获取 ID，不要猜测 ID。
 - `CONFIG_KEY_MISSING` 或 `CONFIG_DECRYPT_FAILED` 时停止并请求用户处理；不要擅自删除或覆盖配置与密钥。
@@ -169,18 +172,18 @@ exchange-cli config show
 
 常用边界：
 
-- 邮件 `--folder` 支持全套定位机制：
+- 邮件 `--folder` 支持全套定位机制（严格限制在邮箱树内，不接受 `.` 或 `..` 路径穿越）：
   1. 英文别名：`inbox`、`sent`、`drafts`、`trash`（或 `deleteditems`）、`junk`、`outbox`、`archive`；
-  2. 中文别名：`收件箱`、`已发送邮件`（或 `已发送`）、`草稿`（或 `草稿箱`）、`已删除邮件`（或 `回收站`、`已删除`）、`垃圾邮件`、`发件箱`、`归档`；
+  2. 中文别名：`收件箱`、`已发送邮件`（或 `已发送`）、`草稿`（或 `草稿箱`）、`已删除邮件`（或 `回收站`、`已删除`）、`垃圾邮件`、`发件箱`、`归档`（自动适配或兜底至 `Archive` 文件夹）；
   3. 单段文件夹名：如 `folder list` 返回的根级名称（如 `对话历史记录`、`Archive`）以及任意深度子文件夹名（如 `日常监察任务单`）；
   4. 多段层级路径：如 `收件箱/日常监察任务单`、`inbox/sub`、`已删除邮件/Untitled Folder`（`folder tree` 节点直接给出 `path` 字段）；
-  5. 真实 EWS 文件夹 ID：支持 `folder list` / `folder tree` 输出的 `id` 属性。
-- 含非邮件项文件夹与回收站：对于 `trash` 等混有已删除联系人/日程/任务的文件夹，`email list` 与 `email search` 自动过滤非邮件项，输出 `count` 仅统计邮件，并在顶层返回 `skipped_items: N` 计数；若无邮件则安全返回 `data: []` 且 `count: 0`，绝不崩溃。
-- 邮件、草稿、日历、任务和联系人的 `--limit` 范围为 `1..200`。列表结果带 `truncated`。
-- `email watch` 必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。支持通过 `SIGINT`（Ctrl+C）或 `SIGTERM` 优雅中断，Node 包装器会即时转发信号并回收底层 EWS 流式订阅与连接，彻底杜绝孤儿进程。
-- `email search` 支持关键字 `query`、`--from` 发件人（支持邮箱或人名，中文名含空格如 `张 霞` 亦可自动去空反查通讯录；输出包含 `from_resolved: true/false` 区分通讯录未命中与无邮件）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
-- `email send` 与 `draft create`：支持 `--attach <path>` 携带文件附件（可多传），支持 `--body-type [text|html]`（默认 text）；`email send` 还支持 `--bcc` 密送收件人。
-- `calendar update` 和 `task update` 至少提供一个更新字段。
+  5. 真实 EWS 文件夹 ID：支持 `folder list` / `folder tree` 输出的 `id` 属性（包含含 `/` 的长 Base64 ID）。
+- 含非邮件项文件夹与回收站：对于 `trash` 等混有已删除联系人/日程/任务的文件夹，`email list` 与 `email search` 自动过滤非邮件项，输出 `count` 仅统计邮件，并在顶层返回 `skipped_items: N` 计数（`email list` 统计客户端跳过的非邮件项；`email search` 走服务端过滤）；若无邮件则安全返回 `data: []` 且 `count: 0`，绝不崩溃。注意 `truncated` 反映的是底层原始分页抓取量，在非邮件项占满分页时可能出现 `count: 0` 且 `truncated: true`。
+- 列表命令的 `--limit` 范围为 `1..200`，默认值：`email list` / `email search` 默认为 `20`；`contact list` 默认为 `50`；`contact search` / `contact resolve` 默认为 `20`。列表结果带 `truncated`。
+- `email watch` 同样支持上述全套文件夹定位机制，必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。支持通过 `SIGINT`（Ctrl+C）或 `SIGTERM` 优雅中断，Node 包装器会即时转发信号并回收底层 EWS 流式订阅与连接，彻底杜绝孤儿进程。
+- `email search` 支持关键字 `query`、`--from` 发件人（未传该选项则不进行过滤且顶层无 `from_resolved` 字段；传空值报错 `INVALID_INPUT`；支持邮箱或人名，中文名含空格如 `张 霞` 亦可自动去空反查通讯录；传了非空值时输出 `from_resolved: true/false` 区分通讯录未命中与无邮件）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
+- `email send` 与 `draft create`：支持 `--attach <path>` 携带文件附件（可多传），支持 `--body-type [text|html]`（默认 text）；支持 `--cc` 抄送收件人；`email send` 还支持 `--bcc` 密送收件人。
+- `calendar create` 与 `calendar update`：支持 `--location` 指定会议地点。`calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`（大小写不敏感，如 `notstarted` 亦可接受）。`--status` 在客户端筛选。
 - 找同事用 `contact resolve`（公司通讯录/GAL），不要只用个人联系人 `contact search`。`contact resolve` 与 `contact search` 均校验非空查询（空值返回 `INVALID_INPUT`）。
@@ -234,8 +237,8 @@ exchange-cli email search "发票" --from "张霞" --has-attachments --start "20
 exchange-cli email send --to "user@example.com" --subject "主题" --body "正文" --dry-run
 # 获得用户明确授权后正式发送：
 exchange-cli email send --to "user@example.com" --subject "主题" --body-file ./body.txt --confirm
-# 携带附件与密送发送：
-exchange-cli email send --to "user@example.com" --bcc "audit@example.com" --subject "合同" --body "详见附件" --attach ./contract.pdf --confirm
+# 携带附件、抄送与密送发送：
+exchange-cli email send --to "user@example.com" --cc "manager@example.com" --bcc "audit@example.com" --subject "合同" --body "详见附件" --attach ./contract.pdf --confirm
 # 发送 HTML 富文本：
 exchange-cli email send --to "user@example.com" --subject "周报" --body "<h1>周报</h1>" --body-type html --confirm
 exchange-cli email reply MESSAGE_ID --body "回复内容" --all --confirm
@@ -246,8 +249,8 @@ exchange-cli email forward MESSAGE_ID --to "user@example.com" --body "补充说�
 
 ```bash
 exchange-cli draft create --to "user@example.com" --subject "主题" --body "正文"
-# 包含附件的草稿：
-exchange-cli draft create --to "user@example.com" --subject "方案草稿" --body "请查阅" --attach ./draft.docx
+# 包含抄送与附件的草稿：
+exchange-cli draft create --to "user@example.com" --cc "team@example.com" --subject "方案草稿" --body "请查阅" --attach ./draft.docx
 exchange-cli draft send DRAFT_ID --dry-run
 exchange-cli draft send DRAFT_ID --confirm
 ```
@@ -257,9 +260,9 @@ exchange-cli draft send DRAFT_ID --confirm
 ```bash
 exchange-cli calendar list
 exchange-cli calendar list --start "YYYY-MM-DD" --end "YYYY-MM-DD"
-exchange-cli calendar create --subject "内部准备会" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM"
+exchange-cli calendar create --subject "内部准备会" --location "3号会议室" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM"
 # 带参会人并发送邀请通知（需要 --confirm）：
-exchange-cli calendar create --subject "项目会议" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM" --attendees "a@example.com,b@example.com" --confirm
+exchange-cli calendar create --subject "项目会议" --location "线上会议室" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM" --attendees "a@example.com,b@example.com" --confirm
 # 带参会人但不发送通知（免 --confirm）：
 exchange-cli calendar create --subject "仅占日历" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM" --attendees "a@example.com" --notify none
 ```

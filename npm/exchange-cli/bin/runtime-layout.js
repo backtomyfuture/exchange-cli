@@ -30,15 +30,54 @@ function copyDirRecursive(srcDir, dstDir) {
   }
 }
 
-function copyIfMissing(src, dst, logger) {
+let inMemoryLayoutChecked = false;
+
+function linkOrCopyFile(src, dst) {
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  // Try hardlink first (fast, zero extra disk space, works on same filesystem)
+  try {
+    fs.linkSync(src, dst);
+    return;
+  } catch {
+    // Fall back to relative symlink
+    try {
+      const rel = path.relative(path.dirname(dst), src);
+      fs.symlinkSync(rel, dst);
+      return;
+    } catch {
+      // Fall back to file copy
+      fs.copyFileSync(src, dst);
+    }
+  }
+  try {
+    const stat = fs.statSync(src);
+    fs.chmodSync(dst, stat.mode & 0o777);
+  } catch {
+    // Best effort only.
+  }
+}
+
+function linkOrCopyDir(srcDir, dstDir) {
+  fs.mkdirSync(path.dirname(dstDir), { recursive: true });
+  // Try symlink first for directories (like Versions/Current -> 3.12)
+  try {
+    const rel = path.relative(path.dirname(dstDir), srcDir);
+    fs.symlinkSync(rel, dstDir, 'junction');
+    return;
+  } catch {
+    copyDirRecursive(srcDir, dstDir);
+  }
+}
+
+function linkOrCopyIfMissing(src, dst, logger) {
   if (fs.existsSync(dst) || !fs.existsSync(src)) {
     return false;
   }
   const stat = fs.statSync(src);
   if (stat.isDirectory()) {
-    copyDirRecursive(src, dst);
+    linkOrCopyDir(src, dst);
   } else {
-    copyFileWithMode(src, dst);
+    linkOrCopyFile(src, dst);
   }
   if (logger) {
     logger(`exchange-cli: repaired missing runtime path ${path.basename(dst)}`);
@@ -70,22 +109,29 @@ function resolveFrameworkVersionDir(internalDir) {
 }
 
 function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
+  if (inMemoryLayoutChecked) {
+    return { changed: false };
+  }
   if (!(process.platform === 'darwin' && process.arch === 'arm64')) {
+    inMemoryLayoutChecked = true;
     return { changed: false };
   }
   const binDir = path.dirname(binaryPath);
   const internalDir = path.join(binDir, '_internal');
   if (!fs.existsSync(internalDir)) {
+    inMemoryLayoutChecked = true;
     return { changed: false };
   }
 
   const markerPath = path.join(internalDir, '.runtime_layout_ok');
   if (fs.existsSync(markerPath)) {
+    inMemoryLayoutChecked = true;
     return { changed: false };
   }
 
   const frameworkVersionDir = resolveFrameworkVersionDir(internalDir);
   if (!frameworkVersionDir) {
+    inMemoryLayoutChecked = true;
     return { changed: false };
   }
   const sourcePython = path.join(frameworkVersionDir, 'Python');
@@ -103,7 +149,7 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
 
   let changed = false;
   for (const target of targets) {
-    changed = copyIfMissing(target.src, target.dst, logger) || changed;
+    changed = linkOrCopyIfMissing(target.src, target.dst, logger) || changed;
   }
 
   try {
@@ -118,6 +164,7 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
     // Best effort only.
   }
 
+  inMemoryLayoutChecked = true;
   return { changed };
 }
 

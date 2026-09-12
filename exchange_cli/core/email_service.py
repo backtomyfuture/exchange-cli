@@ -8,37 +8,92 @@ from exchangelib.folders import Folder
 from .errors import NOT_FOUND_EXCEPTIONS, CliError
 from .serializers import serialize_email_summary
 
-WELL_KNOWN_FOLDERS = {
+WELL_KNOWN_FOLDERS: dict[str, tuple[str | None, tuple[str, ...]]] = {
     # Inbox
-    "inbox": "inbox",
-    "收件箱": "inbox",
+    "inbox": ("inbox", ("收件箱", "Inbox")),
+    "收件箱": ("inbox", ("收件箱", "Inbox")),
     # Sent
-    "sent": "sent",
-    "sentitems": "sent",
-    "已发送": "sent",
-    "已发送邮件": "sent",
+    "sent": ("sent", ("已发送邮件", "已发送", "Sent Items")),
+    "sentitems": ("sent", ("已发送邮件", "已发送", "Sent Items")),
+    "已发送": ("sent", ("已发送邮件", "已发送", "Sent Items")),
+    "已发送邮件": ("sent", ("已发送邮件", "已发送", "Sent Items")),
     # Drafts
-    "drafts": "drafts",
-    "草稿": "drafts",
-    "草稿箱": "drafts",
+    "drafts": ("drafts", ("草稿", "草稿箱", "Drafts")),
+    "草稿": ("drafts", ("草稿", "草稿箱", "Drafts")),
+    "草稿箱": ("drafts", ("草稿", "草稿箱", "Drafts")),
     # Trash / Deleted Items
-    "trash": "trash",
-    "deleteditems": "trash",
-    "已删除": "trash",
-    "已删除邮件": "trash",
-    "回收站": "trash",
-    "废纸篓": "trash",
+    "trash": ("trash", ("已删除邮件", "已删除", "回收站", "废纸篓", "Deleted Items")),
+    "deleteditems": ("trash", ("已删除邮件", "已删除", "回收站", "废纸篓", "Deleted Items")),
+    "已删除": ("trash", ("已删除邮件", "已删除", "回收站", "废纸篓", "Deleted Items")),
+    "已删除邮件": ("trash", ("已删除邮件", "已删除", "回收站", "废纸篓", "Deleted Items")),
+    "回收站": ("trash", ("已删除邮件", "已删除", "回收站", "废纸篓", "Deleted Items")),
+    "废纸篓": ("trash", ("已删除邮件", "已删除", "回收站", "废纸篓", "Deleted Items")),
     # Junk
-    "junk": "junk",
-    "junkemail": "junk",
-    "垃圾邮件": "junk",
+    "junk": ("junk", ("垃圾邮件", "Junk Email")),
+    "junkemail": ("junk", ("垃圾邮件", "Junk Email")),
+    "垃圾邮件": ("junk", ("垃圾邮件", "Junk Email")),
     # Outbox
-    "outbox": "outbox",
-    "发件箱": "outbox",
+    "outbox": ("outbox", ("发件箱", "Outbox")),
+    "发件箱": ("outbox", ("发件箱", "Outbox")),
     # Archive
-    "archive": "archive",
-    "归档": "archive",
+    "archive": (None, ("Archive", "归档", "封存")),
+    "归档": (None, ("Archive", "归档", "封存")),
 }
+
+EWS_ID_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-")
+
+
+def _looks_like_ews_id(s: str) -> bool:
+    return len(s) >= 40 and not any(c.isspace() for c in s) and set(s).issubset(EWS_ID_CHARS)
+
+
+def _validate_folder_input(folder_name: str) -> str:
+    """Validate folder name input against path traversal and empty/dot-only paths."""
+    if not isinstance(folder_name, str) or not folder_name.strip():
+        raise CliError("Folder is required.", code="INVALID_FOLDER", exit_code=2)
+    raw = folder_name.strip()
+    # Check for path traversal segments
+    parts = [part.strip() for part in raw.replace("\\", "/").split("/")]
+    for p in parts:
+        if p == "..":
+            raise CliError(
+                f"Invalid folder path '{raw}': traversal with '..' is not allowed.",
+                code="INVALID_FOLDER",
+                exit_code=2,
+            )
+    # Check if path consists only of dots or slashes
+    non_dot_parts = [p for p in parts if p and p != "."]
+    if not non_dot_parts:
+        raise CliError(f"Invalid folder path '{raw}'.", code="INVALID_FOLDER", exit_code=2)
+    return raw
+
+
+def _resolve_well_known_folder(account, name: str):
+    entry = WELL_KNOWN_FOLDERS.get(name.lower())
+    if not entry:
+        return None
+    attr_name, candidate_names = entry
+    if attr_name:
+        folder = getattr(account, attr_name, None)
+        if folder is not None:
+            return folder
+    # Fallback to candidate names under msg_folder_root (e.g. Archive / 归档)
+    if hasattr(account, "msg_folder_root") and account.msg_folder_root:
+        for cand in candidate_names:
+            try:
+                cand_folder = account.msg_folder_root / cand
+                if cand_folder is not None:
+                    return cand_folder
+            except Exception:
+                pass
+        try:
+            lowered_cands = {c.lower() for c in candidate_names}
+            for child in getattr(account.msg_folder_root, "children", []):
+                if getattr(child, "name", "").lower() in lowered_cands:
+                    return child
+        except Exception:
+            pass
+    return None
 
 
 def is_email_item(item) -> bool:
@@ -68,21 +123,32 @@ def _resolve_folder_by_id(account, folder_id: str):
         pass
     except Exception:
         raise
+
+    try:
+        if hasattr(account, "root") and hasattr(account.root, "get_folder"):
+            return account.root.get_folder(Folder(root=account.root, id=folder_id))
+    except (*NOT_FOUND_EXCEPTIONS, ResponseMessageError, ValueError, TypeError):
+        pass
+    except Exception:
+        raise
+
     return None
 
 
 def resolve_mail_folder(account, folder_name: str):
     """Resolve a well-known name, folder path, folder name, or folder id."""
 
-    if not isinstance(folder_name, str) or not folder_name.strip():
-        raise CliError("Folder is required.", code="INVALID_FOLDER", exit_code=2)
-    raw = folder_name.strip()
-    lowered = raw.lower()
+    raw = _validate_folder_input(folder_name)
 
-    if lowered in WELL_KNOWN_FOLDERS:
-        folder = getattr(account, WELL_KNOWN_FOLDERS[lowered], None)
-        if folder is not None:
-            return folder
+    well_known = _resolve_well_known_folder(account, raw)
+    if well_known is not None:
+        return well_known
+
+    # Prioritize EWS folder IDs (length >= 40, base64 char set, can contain '/')
+    if _looks_like_ews_id(raw):
+        resolved_folder = _resolve_folder_by_id(account, raw)
+        if resolved_folder is not None:
+            return resolved_folder
 
     if "/" in raw or "\\" in raw:
         return _resolve_folder_path(account, raw)
@@ -93,11 +159,14 @@ def resolve_mail_folder(account, folder_name: str):
     except Exception:
         pass
 
-    # Check if raw looks like an EWS folder ID (base64 string without spaces)
-    if len(raw) >= 30 and not any(c in raw for c in (" ", "\t", "\n")):
-        resolved_folder = _resolve_folder_by_id(account, raw)
-        if resolved_folder is not None:
-            return resolved_folder
+    # Check children case-insensitively
+    try:
+        raw_lower = raw.lower()
+        for child in getattr(account.msg_folder_root, "children", []):
+            if getattr(child, "name", "").lower() == raw_lower:
+                return child
+    except Exception:
+        pass
 
     # Check subfolders by name anywhere under msg_folder_root (e.g. "日常监察任务单", "Untitled Folder")
     try:
@@ -107,8 +176,8 @@ def resolve_mail_folder(account, folder_name: str):
     except Exception:
         pass
 
-    # Fallback ID check
-    if len(raw) >= 10 and not any(c in raw for c in (" ", "\t", "\n")):
+    # Fallback ID check (shorter IDs >= 10 chars)
+    if len(raw) >= 10 and not any(c.isspace() for c in raw) and set(raw).issubset(EWS_ID_CHARS):
         resolved_folder = _resolve_folder_by_id(account, raw)
         if resolved_folder is not None:
             return resolved_folder
@@ -117,16 +186,15 @@ def resolve_mail_folder(account, folder_name: str):
 
 
 def _resolve_folder_path(account, path: str):
-    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    parts = [part.strip() for part in path.replace("\\", "/").split("/") if part.strip() and part.strip() != "."]
     if not parts:
         raise CliError("Folder path is empty.", code="INVALID_FOLDER", exit_code=2)
     current = account.msg_folder_root
     first_lower = parts[0].lower()
-    if first_lower in WELL_KNOWN_FOLDERS:
-        well_known_folder = getattr(account, WELL_KNOWN_FOLDERS[first_lower], None)
-        if well_known_folder is not None:
-            current = well_known_folder
-            parts = parts[1:]
+    well_known_folder = _resolve_well_known_folder(account, first_lower)
+    if well_known_folder is not None:
+        current = well_known_folder
+        parts = parts[1:]
     for part in parts:
         try:
             current = current / part
