@@ -33,6 +33,19 @@ class TestCalendarList:
         mock_conn.calendar.view.return_value = []
         result = runner.invoke(cli, ["calendar", "list", "--start", "2024-07-01", "--end", "2024-07-31"])
         assert result.exit_code == 0
+        start, end = mock_conn.calendar.view.call_args.kwargs["start"], mock_conn.calendar.view.call_args.kwargs["end"]
+        assert (start.year, start.month, start.day) == (2024, 7, 1)
+        assert (end.year, end.month, end.day) == (2024, 8, 1)
+
+    def test_list_same_day_is_inclusive(self, runner, mock_conn):
+        mock_conn.calendar.view.return_value = []
+        result = runner.invoke(cli, ["calendar", "list", "--start", "2024-07-15", "--end", "2024-07-15"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        start, end = mock_conn.calendar.view.call_args.kwargs["start"], mock_conn.calendar.view.call_args.kwargs["end"]
+        assert (start.year, start.month, start.day) == (2024, 7, 15)
+        assert (end.year, end.month, end.day) == (2024, 7, 16)
 
 
 class TestCalendarCreate:

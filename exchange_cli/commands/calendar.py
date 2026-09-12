@@ -33,6 +33,35 @@ def _parse_datetime(dt_str: str) -> EWSDateTime:
     raise click.BadParameter(f"Invalid datetime: {dt_str}. Use YYYY-MM-DD HH:MM format.")
 
 
+def _parse_list_bound(value: str | None, *, is_end: bool, now: datetime, timezone: EWSTimeZone) -> EWSDateTime:
+    """Parse calendar.list bounds.
+
+    Date-only --end is inclusive of that day: EWS calendar.view uses an exclusive
+    end, so YYYY-MM-DD becomes the following midnight.
+    """
+
+    if value is None:
+        if is_end:
+            bound = now + timedelta(days=1)
+        else:
+            bound = now
+        return EWSDateTime(bound.year, bound.month, bound.day, tzinfo=timezone)
+
+    for fmt, has_time in (
+        ("%Y-%m-%d %H:%M:%S", True),
+        ("%Y-%m-%d %H:%M", True),
+        ("%Y-%m-%d", False),
+    ):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            if is_end and not has_time:
+                parsed = parsed + timedelta(days=1)
+            return EWSDateTime.from_datetime(parsed).replace(tzinfo=timezone)
+        except ValueError:
+            continue
+    raise click.BadParameter(f"Invalid datetime: {value}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM.")
+
+
 def _notify_value(notify: str) -> str:
     return MEETING_NOTIFY_MAP[notify]
 
@@ -45,22 +74,15 @@ def calendar(ctx):
 
 @calendar.command("list")
 @click.option("--start", default=None, help="Start date (YYYY-MM-DD), default: today")
-@click.option("--end", default=None, help="End date (YYYY-MM-DD), default: tomorrow")
+@click.option("--end", default=None, help="Inclusive end date (YYYY-MM-DD), default: today")
 @click.pass_context
 def calendar_list(ctx, start, end):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         timezone = EWSTimeZone.localzone()
         now = datetime.now()
-        if start:
-            start_dt = _parse_datetime(start)
-        else:
-            start_dt = EWSDateTime(now.year, now.month, now.day, tzinfo=timezone)
-        if end:
-            end_dt = _parse_datetime(end)
-        else:
-            tomorrow = now + timedelta(days=1)
-            end_dt = EWSDateTime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=timezone)
+        start_dt = _parse_list_bound(start, is_end=False, now=now, timezone=timezone)
+        end_dt = _parse_list_bound(end, is_end=True, now=now, timezone=timezone)
         ensure_start_before_end(start_dt, end_dt, action="calendar.list")
         account = get_connection(ctx)
         events = list(account.calendar.view(start=start_dt, end=end_dt))
