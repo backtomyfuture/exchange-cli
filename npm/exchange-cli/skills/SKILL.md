@@ -8,6 +8,7 @@ description: |
 metadata:
   requires:
     bins: ["exchange-cli"]
+  install: "npm install -g @backtomyfuture/exchange-cli"
   cliHelp: "exchange-cli --help"
 ---
 
@@ -48,7 +49,7 @@ exchange-cli --request-id 12345-uuid email list
 - `draft send`
 - `email delete`（默认移入回收站；`--permanent` 才永久删除）、`draft delete`、`calendar delete`、`task delete`
 - 带 `--attendees` 且会发邀请的 `calendar create`
-- `--notify all` 的 `calendar update` / `calendar delete`
+- `--notify all` 的 `calendar update`（向参会人发送变更通知；`calendar delete` 本身始终需要 `--confirm`）
 
 高危写操作安全预演（`--dry-run`）：
 以上写命令（`email send`、`email reply`、`email forward`、`email delete`、`calendar create`、`calendar delete`、`draft send`、`draft delete`、`task delete`）均支持 `--dry-run`。`--dry-run` 不会连接 Exchange 网络，不要求 `--confirm`，返回结构化预览（如附件大小、收件人列表、正文长度、是否需要 confirm），Agent 在向用户汇报前可用 `--dry-run` 预演校验入参。
@@ -156,14 +157,14 @@ exchange-cli config show
 - 邮件 `--folder` 接受 `inbox`、`sent`、`drafts`、`trash`、`junk`，也可以是文件夹路径或文件夹 ID。
 - 邮件、草稿、日历、任务和联系人的 `--limit` 范围为 `1..200`。列表结果带 `truncated`。
 - `email watch` 必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。
-- `email search` 支持关键字 `query`、`--from` 发件人、`--has-attachments` 仅含附件，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
+- `email search` 支持关键字 `query`、`--from` 发件人、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
 - `calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`。`--status` 在客户端筛选。
 - 找同事用 `contact resolve`（公司通讯录/GAL），不要只用个人联系人 `contact search`。
-- `calendar list --end YYYY-MM-DD` 含当天；同一天查询应传相同的 start/end，不要把 end 设成次日来“包含今天”。
+- `calendar list` 不传参数默认查询当天（无 `--today` 选项）；指定范围时 `--end YYYY-MM-DD` 含当天，查询某一天应传相同 start/end 或直接不传参数。
 - `email delete` 默认移入回收站；永久删除必须同时给 `--permanent --confirm`。
-- 会议更新/取消默认不通知参会人；`--notify all` 才会发通知，且需要 `--confirm`。
+- 会议更新默认不通知参会人（`--notify all` 才会发通知，且需要 `--confirm`）；删除会议始终需要 `--confirm`，指定 `--notify all` 会额外发送会议取消通知。
 - 写操作超时返回 `WRITE_OUTCOME_UNKNOWN` 且 `retryable=false`，不要自动重试。
 
 具体选项和当前默认值始终以 `exchange-cli <group> <command> --help` 为准。
@@ -174,6 +175,7 @@ exchange-cli config show
 
 ```bash
 exchange-cli email list --folder inbox --unread --limit 20
+exchange-cli email list --folder inbox --with-preview --limit 10
 exchange-cli email read MESSAGE_ID
 exchange-cli email read MESSAGE_ID --max-body-length 1000
 exchange-cli email read MESSAGE_ID --include-html
@@ -181,6 +183,7 @@ exchange-cli email read MESSAGE_ID --fields id,subject,body
 exchange-cli email read MESSAGE_ID --body-format html
 exchange-cli email read MESSAGE_ID --save-attachments ./downloads
 exchange-cli email mark-read MESSAGE_ID
+exchange-cli email mark-unread MESSAGE_ID
 exchange-cli email move MESSAGE_ID --folder trash
 exchange-cli email delete MESSAGE_ID --confirm
 exchange-cli email delete MESSAGE_ID --permanent --confirm
@@ -190,6 +193,8 @@ exchange-cli email delete MESSAGE_ID --permanent --confirm
 
 ```bash
 exchange-cli email search "关键词" --folder inbox --start "YYYY-MM-DD" --end "YYYY-MM-DD"
+# 支持带正文片段预览：
+exchange-cli email search "通知" --with-preview --limit 10
 # 多维度精准搜索与 RFC 3339 时区支持：
 exchange-cli email search "发票" --from "finance@example.com" --has-attachments --start "2026-09-01T00:00:00Z"
 ```
