@@ -49,12 +49,13 @@ npm install -g @backtomyfuture/exchange-cli
 这个工具面向公司内网 Exchange，不适合进 Homebrew 官方 core。同事可以装自己的 tap：
 
 ```bash
-brew tap backtomyfuture/exchange-cli https://github.com/backtomyfuture/homebrew-exchange-cli.git
+brew tap backtomyfuture/exchange-cli
+brew trust --tap backtomyfuture/exchange-cli
 brew install exchange-cli
 exchange-cli --version
 ```
 
-tap 仓库会在 `v0.2.1` 发布完成后更新公式。公式从 GitHub Release 下载当前平台的预编译二进制。
+Homebrew 6 会拒绝未信任的第三方 formula。第一次安装需要 `brew trust`；这不是 Homebrew 官方 core。公式从 GitHub Release 下载当前平台的预编译二进制。
 
 ### 从源码安装（开发者）
 
