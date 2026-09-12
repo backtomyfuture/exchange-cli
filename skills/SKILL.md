@@ -156,7 +156,7 @@ exchange-cli config show
 - 邮件 `--folder` 接受 `inbox`、`sent`、`drafts`、`trash`、`junk`，也可以是文件夹路径或文件夹 ID。
 - 邮件、草稿、日历、任务和联系人的 `--limit` 范围为 `1..200`。列表结果带 `truncated`。
 - `email watch` 必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。
-- `email search` 支持关键字 `query`、`--from` 发件人、`--to` 收件人、`--has-attachments` 仅含附件，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`。
+- `email search` 支持关键字 `query`、`--from` 发件人、`--has-attachments` 仅含附件，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
 - `calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`。`--status` 在客户端筛选。

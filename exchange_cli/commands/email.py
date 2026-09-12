@@ -354,7 +354,6 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
 @click.option("--start", default=None, help="Start date/time (YYYY-MM-DD or RFC 3339)")
 @click.option("--end", default=None, help="End date/time (YYYY-MM-DD or RFC 3339)")
 @click.option("--from", "from_addr", default=None, help="Filter by sender (name or email)")
-@click.option("--to", "to_addr", default=None, help="Filter by recipient (name or email)")
 @click.option("--has-attachments", is_flag=True, default=False, help="Only return emails with attachments")
 @click.option(
     "--with-preview",
@@ -363,7 +362,7 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
     help="Include body_preview (slower for large result sets)",
 )
 @click.pass_context
-def email_search(ctx, query, folder_name, limit, start, end, from_addr, to_addr, has_attachments, with_preview):
+def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_attachments, with_preview):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         start_dt = _parse_search_date(start, is_end=False) if start else None
@@ -380,9 +379,6 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, to_addr,
         if from_addr:
             from_addr_clean = from_addr.strip()
             criteria &= (Q(sender__icontains=from_addr_clean) | Q(author__icontains=from_addr_clean))
-        if to_addr:
-            to_addr_clean = to_addr.strip()
-            criteria &= Q(to_recipients__icontains=to_addr_clean)
         if has_attachments:
             criteria &= Q(has_attachments=True)
         queryset = folder.filter(criteria)

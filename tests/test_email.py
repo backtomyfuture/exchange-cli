@@ -362,8 +362,6 @@ class TestEmailSearch:
                 "quarterly report",
                 "--from",
                 "alice@example.com",
-                "--to",
-                "bob@example.com",
                 "--has-attachments",
                 "--start",
                 "2024-07-15T10:00:00Z",
@@ -375,8 +373,21 @@ class TestEmailSearch:
         call_args = mock_conn.inbox.filter.call_args[0]
         q_expr = str(call_args[0])
         assert "sender icontains 'alice@example.com'" in q_expr
-        assert "to_recipients icontains 'bob@example.com'" in q_expr
         assert "has_attachments == True" in q_expr
+
+    def test_search_criteria_can_serialize_to_xml(self):
+        from exchangelib import Folder, Message, Q
+        folder = MagicMock(spec=Folder)
+        folder.get_item_field_by_fieldname.side_effect = Message.get_field_by_fieldname
+        start_dt = _parse_search_date("2026-09-12T00:00:00Z", is_end=False)
+        criteria = (
+            (Q(subject__icontains="test") | Q(body__icontains="test"))
+            & Q(sender__icontains="alice")
+            & Q(has_attachments=True)
+            & Q(datetime_received__gte=start_dt)
+        )
+        elem = criteria.to_xml(folders=[folder], version=None, applies_to=None)
+        assert elem is not None
 
     def test_search_invalid_start_date_returns_invalid_input(self, runner, mock_conn):
         result = runner.invoke(cli, ["email", "search", "quarterly report", "--start", "2024/07/01"])

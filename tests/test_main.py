@@ -102,6 +102,29 @@ def test_schema_single_command(runner):
     assert "--confirm" in option_names
 
 
+def test_schema_calendar_command_semantics(runner):
+    result = runner.invoke(cli, ["schema", "calendar.create"])
+    assert result.exit_code == 0
+    create_data = json.loads(result.output)["data"]
+    assert create_data["confirm"] is True
+    assert create_data["effect"] == "conditional"
+    assert create_data["confirmation"] == "conditional"
+
+    result = runner.invoke(cli, ["schema", "calendar.update"])
+    assert result.exit_code == 0
+    update_data = json.loads(result.output)["data"]
+    assert update_data["confirm"] is False
+    assert update_data["effect"] == "conditional"
+    assert update_data["confirmation"] == "conditional"
+
+    result = runner.invoke(cli, ["schema", "calendar.delete"])
+    assert result.exit_code == 0
+    delete_data = json.loads(result.output)["data"]
+    assert delete_data["confirm"] is True
+    assert delete_data["effect"] == "internal_modify"
+    assert delete_data["confirmation"] == "required"
+
+
 def test_schema_command_with_arguments(runner):
     result = runner.invoke(cli, ["schema", "email.read"])
 

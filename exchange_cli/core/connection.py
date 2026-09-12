@@ -14,9 +14,9 @@ from exchangelib.protocol import BaseProtocol, FailFast, NoVerifyHTTPAdapter
 from urllib3 import disable_warnings
 from urllib3.exceptions import InsecureRequestWarning
 
+from .. import __version__
 from .config import ConfigManager
 from .errors import CliError
-from .. import __version__
 
 BaseProtocol.USERAGENT = f"exchange-cli/{__version__}"
 
