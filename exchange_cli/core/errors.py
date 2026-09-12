@@ -16,6 +16,7 @@ from exchangelib.errors import (
     ErrorInvalidIdMalformedEwsLegacyIdFormat,
     ErrorInvalidIdMonikerTooLong,
     ErrorInvalidIdStoreObjectIdTooLong,
+    ErrorInvalidNameForNameResolution,
     ErrorItemNotFound,
     ErrorParentFolderNotFound,
     ErrorServerBusy,
@@ -96,6 +97,8 @@ def classify_exception(exc: Exception, *, default_code: str = "SERVER_ERROR") ->
         return CliError("Exchange Server is busy. Retry later.", code="SERVER_BUSY", retryable=True)
     if isinstance(exc, NOT_FOUND_EXCEPTIONS):
         return CliError("The requested Exchange item or folder was not found.", code="NOT_FOUND")
+    if isinstance(exc, ErrorInvalidNameForNameResolution):
+        return CliError(str(exc) or "Invalid name for name resolution.", code="INVALID_INPUT", exit_code=2)
     if isinstance(exc, ResponseMessageError):
         return CliError(
             str(exc) or "Exchange Server returned an error.",

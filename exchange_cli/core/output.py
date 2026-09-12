@@ -43,7 +43,15 @@ class OutputFormatter:
             start_time=ctx.obj.get("start_time"),
         )
 
-    def success(self, data, count: int | None = None, truncated: bool | None = None, file=None):
+    def success(
+        self,
+        data,
+        count: int | None = None,
+        truncated: bool | None = None,
+        skipped_items: int | None = None,
+        from_resolved: bool | None = None,
+        file=None,
+    ):
         handle = file or sys.stdout
         if self.fmt == "json":
             payload: dict[str, Any] = {"ok": True, "data": data}
@@ -51,6 +59,10 @@ class OutputFormatter:
                 payload["count"] = count
             if truncated is not None:
                 payload["truncated"] = truncated
+            if skipped_items is not None and skipped_items > 0:
+                payload["skipped_items"] = skipped_items
+            if from_resolved is not None:
+                payload["from_resolved"] = from_resolved
             if self.request_id:
                 meta: dict[str, Any] = {"request_id": self.request_id}
                 if self.start_time is not None:

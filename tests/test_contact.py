@@ -55,3 +55,24 @@ class TestContactResolve:
         assert payload["data"][0]["source"] == "directory"
         mock_conn.protocol.resolve_names.assert_called_once()
         assert mock_conn.protocol.version.api_version == "Exchange2016"
+
+    def test_resolve_empty_query_returns_invalid_input(self, runner, mock_conn):
+        result = runner.invoke(cli, ["contact", "resolve", ""])
+        assert result.exit_code == 2
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert payload["code"] == "INVALID_INPUT"
+
+    def test_resolve_whitespace_query_returns_invalid_input(self, runner, mock_conn):
+        result = runner.invoke(cli, ["contact", "resolve", "   "])
+        assert result.exit_code == 2
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert payload["code"] == "INVALID_INPUT"
+
+    def test_search_empty_query_returns_invalid_input(self, runner, mock_conn):
+        result = runner.invoke(cli, ["contact", "search", ""])
+        assert result.exit_code == 2
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert payload["code"] == "INVALID_INPUT"

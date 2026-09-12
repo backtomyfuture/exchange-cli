@@ -193,7 +193,17 @@ def save_file_attachments(save_dir: Path, attachments: Iterable[Any]) -> list[Pa
             ) from exc
 
     try:
+        cur = base
+        dirs_to_secure: list[Path] = []
+        while cur != cur.parent and not cur.exists():
+            dirs_to_secure.append(cur)
+            cur = cur.parent
         base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for d in dirs_to_secure:
+            try:
+                d.chmod(0o700)
+            except OSError:
+                pass
     except OSError as exc:
         raise CliError(
             f"Could not create attachment directory: {base}.",

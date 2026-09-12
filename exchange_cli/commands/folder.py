@@ -12,12 +12,14 @@ def get_connection(ctx):
     return get_account(ctx)
 
 
-def _walk_tree(folder, depth=0):
-    node = serialize_folder(folder)
+def _walk_tree(folder, depth=0, parent_path=""):
+    current_name = getattr(folder, "name", "") or ""
+    current_path = f"{parent_path}/{current_name}" if parent_path else current_name
+    node = serialize_folder(folder, path=current_path)
     node["depth"] = depth
     items = [node]
     for child in getattr(folder, "children", []):
-        items.extend(_walk_tree(child, depth + 1))
+        items.extend(_walk_tree(child, depth + 1, current_path))
     return items
 
 
@@ -34,7 +36,7 @@ def folder_list(ctx):
     try:
         account = get_connection(ctx)
         folders = list(account.msg_folder_root.children)
-        results = [serialize_folder(folder_obj) for folder_obj in folders]
+        results = [serialize_folder(folder_obj, path=getattr(folder_obj, "name", "") or "") for folder_obj in folders]
         formatter.success(results, count=len(results))
     except Exception as exc:
         raise classify_exception(exc) from exc

@@ -123,6 +123,7 @@ exchange-cli config show
 
 - 先判断 `ok`，再读取 `data` 或 `error`；列表数量读取 `count`；耗时与请求追踪读取 `meta.elapsed_ms` 与 `meta.request_id`。
 - 错误时读取 `code`、`retryable`、`request_id`、`meta` 和可选 `details`，不要靠错误文本做控制流。
+- 常见错误码：`NOT_FOUND`（资源或文件夹不存在）、`INVALID_INPUT`（参数非法、空值或未通过校验）、`INVALID_FOLDER`（未传文件夹或格式不合法）、`WATCH_DURATION_REQUIRED`（watch 缺少时长或 --forever）、`INVALID_AUTH_TYPE`（不支持的认证模式）、`BINARY_NOT_FOUND`（二进制缺失）、`CONFIRMATION_REQUIRED`（写操作需 --confirm）、`AUTH_ERROR`、`PERMISSION_ERROR`、`TIMEOUT_ERROR`、`SERVER_BUSY`、`CONNECTION_ERROR`、`WRITE_OUTCOME_UNKNOWN`。
 - 仅当 `retryable=true` 时做有限次数、带退避的重试。认证、配置、权限、输入、确认错误和 `WRITE_OUTCOME_UNKNOWN` 不要自动重试。
 - `NOT_FOUND` 时重新列出资源获取 ID，不要猜测 ID。
 - `CONFIG_KEY_MISSING` 或 `CONFIG_DECRYPT_FAILED` 时停止并请求用户处理；不要擅自删除或覆盖配置与密钥。
@@ -168,15 +169,21 @@ exchange-cli config show
 
 常用边界：
 
-- 邮件 `--folder` 接受 `inbox`、`sent`、`drafts`、`trash`、`junk`，也可以是文件夹路径或文件夹 ID。
+- 邮件 `--folder` 支持全套定位机制：
+  1. 英文别名：`inbox`、`sent`、`drafts`、`trash`（或 `deleteditems`）、`junk`、`outbox`、`archive`；
+  2. 中文别名：`收件箱`、`已发送邮件`（或 `已发送`）、`草稿`（或 `草稿箱`）、`已删除邮件`（或 `回收站`、`已删除`）、`垃圾邮件`、`发件箱`、`归档`；
+  3. 单段文件夹名：如 `folder list` 返回的根级名称（如 `对话历史记录`、`Archive`）以及任意深度子文件夹名（如 `日常监察任务单`）；
+  4. 多段层级路径：如 `收件箱/日常监察任务单`、`inbox/sub`、`已删除邮件/Untitled Folder`（`folder tree` 节点直接给出 `path` 字段）；
+  5. 真实 EWS 文件夹 ID：支持 `folder list` / `folder tree` 输出的 `id` 属性。
+- 含非邮件项文件夹与回收站：对于 `trash` 等混有已删除联系人/日程/任务的文件夹，`email list` 与 `email search` 自动过滤非邮件项，输出 `count` 仅统计邮件，并在顶层返回 `skipped_items: N` 计数；若无邮件则安全返回 `data: []` 且 `count: 0`，绝不崩溃。
 - 邮件、草稿、日历、任务和联系人的 `--limit` 范围为 `1..200`。列表结果带 `truncated`。
-- `email watch` 必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。
-- `email search` 支持关键字 `query`、`--from` 发件人（支持邮箱或人名，输入人名自动通过企业通讯录反查匹配）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
+- `email watch` 必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。支持通过 `SIGINT`（Ctrl+C）或 `SIGTERM` 优雅中断，Node 包装器会即时转发信号并回收底层 EWS 流式订阅与连接，彻底杜绝孤儿进程。
+- `email search` 支持关键字 `query`、`--from` 发件人（支持邮箱或人名，中文名含空格如 `张 霞` 亦可自动去空反查通讯录；输出包含 `from_resolved: true/false` 区分通讯录未命中与无邮件）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
 - `email send` 与 `draft create`：支持 `--attach <path>` 携带文件附件（可多传），支持 `--body-type [text|html]`（默认 text）；`email send` 还支持 `--bcc` 密送收件人。
 - `calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`（大小写不敏感，如 `notstarted` 亦可接受）。`--status` 在客户端筛选。
-- 找同事用 `contact resolve`（公司通讯录/GAL），不要只用个人联系人 `contact search`。
+- 找同事用 `contact resolve`（公司通讯录/GAL），不要只用个人联系人 `contact search`。`contact resolve` 与 `contact search` 均校验非空查询（空值返回 `INVALID_INPUT`）。
 - `calendar list` 不传参数默认查询当天（无 `--today` 选项）；指定范围时 `--end YYYY-MM-DD` 含当天，查询某一天应传相同 start/end 或直接不传参数。
 - `email delete` 默认移入回收站；永久删除必须同时给 `--permanent --confirm`。
 - 会议邀请与更新：带参会人的 `calendar create` 默认发送通知（需要 `--confirm`），但若指定 `--notify none` 则不发通知且免 `--confirm`；会议更新默认不通知参会人（`--notify all` 才会发通知，且需要 `--confirm`）；删除会议始终需要 `--confirm`，指定 `--notify all` 会额外发送会议取消通知。

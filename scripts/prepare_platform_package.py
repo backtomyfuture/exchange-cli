@@ -116,6 +116,24 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Platform-specific verification ───────────────────────────────
     if _is_darwin(platform):
+        versions_dir = target_dir / "_internal" / "Python.framework" / "Versions"
+        if versions_dir.exists():
+            candidates = [p for p in versions_dir.iterdir() if p.is_dir() and p.name != "Current"]
+            if candidates:
+                latest = sorted(candidates)[-1]
+                current_link = versions_dir / "Current"
+                if current_link.is_dir() and not current_link.is_symlink():
+                    shutil.rmtree(current_link)
+                    current_link.symlink_to(latest.name)
+                framework_py = target_dir / "_internal" / "Python.framework" / "Python"
+                if framework_py.is_file() and not framework_py.is_symlink():
+                    framework_py.unlink()
+                    framework_py.symlink_to("Versions/Current/Python")
+                framework_res = target_dir / "_internal" / "Python.framework" / "Resources"
+                if framework_res.is_dir() and not framework_res.is_symlink():
+                    shutil.rmtree(framework_res)
+                    framework_res.symlink_to("Versions/Current/Resources")
+
         python_runtime = target_dir / "_internal" / "Python"
         if not python_runtime.exists():
             raise FileNotFoundError(f"Expected runtime library missing after staging: {python_runtime}")

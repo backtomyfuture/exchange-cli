@@ -44,18 +44,22 @@ def serialize_attachment_summary(attachment):
 
 
 def serialize_email_summary(message, include_body_preview: bool = True):
-    body_preview = _safe_str(message.text_body)[:200] if include_body_preview and message.text_body else ""
+    sender = getattr(message, "sender", None)
+    to_recipients = getattr(message, "to_recipients", None)
+    cc_recipients = getattr(message, "cc_recipients", None)
+    text_body = getattr(message, "text_body", None)
+    body_preview = _safe_str(text_body)[:200] if include_body_preview and text_body else ""
     return {
-        "id": message.id,
-        "subject": message.subject or "",
-        "sender": serialize_mailbox(message.sender),
-        "to": _serialize_mailbox_list(message.to_recipients),
-        "cc": _serialize_mailbox_list(message.cc_recipients),
-        "datetime_received": _safe_isoformat(message.datetime_received),
-        "datetime_sent": _safe_isoformat(message.datetime_sent),
-        "is_read": bool(message.is_read),
-        "has_attachments": bool(message.has_attachments),
-        "importance": _safe_str(message.importance),
+        "id": getattr(message, "id", None),
+        "subject": getattr(message, "subject", "") or "",
+        "sender": serialize_mailbox(sender),
+        "to": _serialize_mailbox_list(to_recipients),
+        "cc": _serialize_mailbox_list(cc_recipients),
+        "datetime_received": _safe_isoformat(getattr(message, "datetime_received", None)),
+        "datetime_sent": _safe_isoformat(getattr(message, "datetime_sent", None)),
+        "is_read": bool(getattr(message, "is_read", False)),
+        "has_attachments": bool(getattr(message, "has_attachments", False)),
+        "importance": _safe_str(getattr(message, "importance", None)),
         "body_preview": body_preview,
     }
 
@@ -80,7 +84,7 @@ def serialize_email_detail(
         )
     )
     if need_bodies:
-        raw_body = _safe_str(message.body)
+        raw_body = _safe_str(getattr(message, "body", None))
         if body_format == "markdown" and raw_body:
             body_content = html_to_markdown(raw_body)
         else:
@@ -106,8 +110,10 @@ def serialize_email_detail(
 
     result["conversation_id"] = _serialize_conversation_id(getattr(message, "conversation_id", None))
     result["internet_message_id"] = _safe_str(getattr(message, "message_id", None))
-    result["bcc"] = _serialize_mailbox_list(message.bcc_recipients)
-    result["attachments"] = [serialize_attachment_summary(att) for att in (message.attachments or [])]
+    result["bcc"] = _serialize_mailbox_list(getattr(message, "bcc_recipients", None))
+    result["attachments"] = [
+        serialize_attachment_summary(att) for att in (getattr(message, "attachments", None) or [])
+    ]
     if fields is None:
         return result
     return {field: result[field] for field in fields if field in result}
@@ -178,14 +184,17 @@ def serialize_contact(contact):
     }
 
 
-def serialize_folder(folder):
-    return {
+def serialize_folder(folder, path: str | None = None):
+    data = {
         "id": getattr(folder, "id", None),
-        "name": folder.name or "",
+        "name": getattr(folder, "name", "") or "",
         "total_count": getattr(folder, "total_count", 0),
         "unread_count": getattr(folder, "unread_count", 0),
         "child_folder_count": getattr(folder, "child_folder_count", 0),
     }
+    if path is not None:
+        data["path"] = path
+    return data
 
 
 def serialize_resolved_name(mailbox, contact=None):

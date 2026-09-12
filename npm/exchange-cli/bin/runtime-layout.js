@@ -79,6 +79,11 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
     return { changed: false };
   }
 
+  const markerPath = path.join(internalDir, '.runtime_layout_ok');
+  if (fs.existsSync(markerPath)) {
+    return { changed: false };
+  }
+
   const frameworkVersionDir = resolveFrameworkVersionDir(internalDir);
   if (!frameworkVersionDir) {
     return { changed: false };
@@ -106,6 +111,13 @@ function ensureDarwinArm64RuntimeLayout(binaryPath, logger = null) {
   } catch {
     // Best effort only.
   }
+
+  try {
+    fs.writeFileSync(markerPath, '');
+  } catch {
+    // Best effort only.
+  }
+
   return { changed };
 }
 

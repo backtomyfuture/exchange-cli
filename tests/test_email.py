@@ -533,3 +533,82 @@ class TestEmailWatch:
         assert result.exit_code == 0
         assert json.loads(result.stdout) == {"ok": True, "data": event}
         assert "Watching folder 'inbox'" in result.stderr
+
+
+class TestEmailNonMessageHandling:
+    def test_list_skips_non_message_items(self, runner, mock_conn):
+        contact_item = MagicMock()
+        contact_item.id = "C1"
+        contact_item.subject = "Not an email"
+        del contact_item.sender  # Contacts have no sender attribute
+
+        mail_item = _mock_message("M1", "Real email")
+
+        mock_conn.trash.all.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[contact_item, mail_item]
+        )
+
+        result = runner.invoke(cli, ["email", "list", "--folder", "trash"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["count"] == 1
+        assert data["data"][0]["id"] == "M1"
+        assert data["skipped_items"] == 1
+
+
+class TestEmailSearchFromResolution:
+    def test_search_with_name_containing_spaces(self, runner, mock_conn):
+        mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[_mock_message("M1", "Found")]
+        )
+        with patch("exchange_cli.core.contact_service.resolve_directory") as mock_resolve:
+            mock_resolve.return_value = ([{"name": "zhang-xia", "email": "zhang-xia@example.com"}], False)
+            result = runner.invoke(cli, ["email", "search", "test", "--from", "张 霞"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["from_resolved"] is True
+
+    def test_search_with_unresolvable_name_reports_flag(self, runner, mock_conn):
+        mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(
+            return_value=[]
+        )
+        with patch("exchange_cli.core.contact_service.resolve_directory") as mock_resolve:
+            mock_resolve.return_value = ([], False)
+            result = runner.invoke(cli, ["email", "search", "test", "--from", "不存在的人名"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["from_resolved"] is False
+
+
+class TestFolderResolution:
+    def test_resolve_chinese_folder_names(self):
+        from exchange_cli.core.email_service import resolve_mail_folder
+
+        account = MagicMock()
+        inbox = MagicMock()
+        inbox.name = "收件箱"
+        trash = MagicMock()
+        trash.name = "已删除邮件"
+        account.inbox = inbox
+        account.trash = trash
+
+        assert resolve_mail_folder(account, "收件箱") is inbox
+        assert resolve_mail_folder(account, "已删除邮件") is trash
+        assert resolve_mail_folder(account, "trash") is trash
+
+    def test_resolve_folder_path_with_alias_prefix(self):
+        from exchange_cli.core.email_service import resolve_mail_folder
+
+        account = MagicMock()
+        inbox = MagicMock()
+        sub = MagicMock()
+        inbox.__truediv__ = MagicMock(return_value=sub)
+        account.inbox = inbox
+
+        assert resolve_mail_folder(account, "inbox/sub") is sub
+        assert resolve_mail_folder(account, "收件箱/sub") is sub

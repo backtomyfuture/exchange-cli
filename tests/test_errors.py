@@ -100,3 +100,12 @@ def test_write_invalid_id_is_not_found_and_not_unknown():
     assert error.retryable is False
     assert error.outcome == "failed"
 
+
+def test_classify_invalid_name_resolution_as_invalid_input():
+    from exchangelib.errors import ErrorInvalidNameForNameResolution
+
+    error = classify_exception(ErrorInvalidNameForNameResolution("invalid name"))
+    assert error.code == "INVALID_INPUT"
+    assert error.exit_code == 2
+    assert error.retryable is False
+

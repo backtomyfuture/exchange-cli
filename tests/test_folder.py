@@ -46,11 +46,25 @@ class TestFolderList:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        assert data["data"][0]["path"] == "Inbox"
+        assert data["data"][1]["path"] == "Sent Items"
 
 
 class TestFolderTree:
     def test_tree(self, runner, mock_conn):
+        sub = MagicMock()
+        sub.id = "F3"
+        sub.name = "Sub"
+        sub.total_count = 10
+        sub.unread_count = 0
+        sub.child_folder_count = 0
+        sub.children = []
+        mock_conn.msg_folder_root.children[0].children = [sub]
+
         result = runner.invoke(cli, ["folder", "tree"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        paths = [item["path"] for item in data["data"]]
+        assert "Inbox" in paths
+        assert "Inbox/Sub" in paths

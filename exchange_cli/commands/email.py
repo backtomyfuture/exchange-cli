@@ -1,6 +1,7 @@
 """exchange-cli email {list, read, send, reply, forward, search, mark-read, move, delete, watch}."""
 
 import json
+import signal
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,12 +17,12 @@ from ..core.email_service import (
     project_email_summary_fields,
     require_message,
     resolve_mail_folder,
+    scan_email_page,
     set_message_read_state,
 )
 from ..core.errors import CliError, classify_exception, classify_write_exception
 from ..core.io import resolve_body
 from ..core.output import OutputFormatter
-from ..core.query import take_page
 from ..core.serializers import serialize_email_detail, serialize_email_summary
 from ..core.validation import (
     EMAIL_DETAIL_FIELD_CHOICES,
@@ -118,14 +119,14 @@ def email_list(ctx, folder_name, limit, unread, with_preview):
     folder_name = _require_folder_arg(folder_name)
     try:
         account = get_connection(ctx)
-        results, truncated = list_email_summaries(
+        results, truncated, skipped_items = list_email_summaries(
             account,
             folder_name=folder_name,
             limit=limit,
             unread=unread,
             with_preview=with_preview,
         )
-        formatter.success(results, count=len(results), truncated=truncated)
+        formatter.success(results, count=len(results), truncated=truncated, skipped_items=skipped_items)
     except Exception as exc:
         raise classify_exception(exc) from exc
 
@@ -377,18 +378,35 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
             criteria &= Q(datetime_received__gte=start_dt)
         if end_dt:
             criteria &= Q(datetime_received__lte=end_dt)
+        from_resolved = None
         if from_addr:
             from_addr_clean = from_addr.strip()
             from_q = Q(sender__icontains=from_addr_clean) | Q(author__icontains=from_addr_clean)
-            if "@" not in from_addr_clean:
+            if "@" in from_addr_clean:
+                from_resolved = True
+            else:
+                from_resolved = False
                 try:
                     from ..core.contact_service import resolve_directory
 
-                    resolved_entries, _ = resolve_directory(account, from_addr_clean, limit=5)
-                    for entry in resolved_entries:
-                        email_addr = entry.get("email")
-                        if email_addr and email_addr.lower() != from_addr_clean.lower():
-                            from_q |= Q(sender__icontains=email_addr) | Q(author__icontains=email_addr)
+                    resolved_entries = []
+                    entries, _ = resolve_directory(account, from_addr_clean, limit=10)
+                    resolved_entries.extend(entries)
+
+                    if " " in from_addr_clean:
+                        collapsed = from_addr_clean.replace(" ", "")
+                        if collapsed:
+                            more, _ = resolve_directory(account, collapsed, limit=10)
+                            for e in more:
+                                if e not in resolved_entries:
+                                    resolved_entries.append(e)
+
+                    if resolved_entries:
+                        from_resolved = True
+                        for entry in resolved_entries:
+                            email_addr = entry.get("email")
+                            if email_addr and email_addr.lower() != from_addr_clean.lower():
+                                from_q |= Q(sender__icontains=email_addr) | Q(author__icontains=email_addr)
                 except Exception:
                     pass
             criteria &= from_q
@@ -396,9 +414,15 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
             criteria &= Q(has_attachments=True)
         queryset = folder.filter(criteria)
         projected = project_email_summary_fields(queryset, include_body_preview=with_preview)
-        page, truncated = take_page(projected.order_by("-datetime_received"), limit)
+        page, truncated, skipped_items = scan_email_page(projected.order_by("-datetime_received"), limit)
         results = [serialize_email_summary(item, include_body_preview=with_preview) for item in page]
-        formatter.success(results, count=len(results), truncated=truncated)
+        formatter.success(
+            results,
+            count=len(results),
+            truncated=truncated,
+            skipped_items=skipped_items,
+            from_resolved=from_resolved,
+        )
     except Exception as exc:
         raise classify_exception(exc) from exc
 
@@ -538,6 +562,15 @@ def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, m
             retryable=False,
         )
     click.echo(f"Watching folder '{folder_name}'. Press Ctrl+C to stop.", err=True)
+    original_sigterm = None
+    try:
+        def _sigterm_handler(signum, frame):
+            raise KeyboardInterrupt()
+
+        original_sigterm = signal.signal(signal.SIGTERM, _sigterm_handler)
+    except (ValueError, AttributeError):
+        pass
+
     try:
         for event in foreground_watch_events(
             ctx.obj.get("config_path"),
@@ -559,3 +592,9 @@ def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, m
         click.echo("Stopped watch stream.", err=True)
     except Exception as exc:
         raise classify_exception(exc) from exc
+    finally:
+        if original_sigterm is not None:
+            try:
+                signal.signal(signal.SIGTERM, original_sigterm)
+            except (ValueError, AttributeError):
+                pass
