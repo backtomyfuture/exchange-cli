@@ -1,183 +1,237 @@
 # exchange-cli
 
-轻量、面向 AI agent 的本地 Microsoft Exchange Server 命令行工具。默认输出 JSON，直接基于 `exchangelib` 和 EWS 工作，不依赖数据库、Docker 或 Web 服务。
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/@backtomyfuture/exchange-cli.svg)](https://www.npmjs.com/package/@backtomyfuture/exchange-cli)
+[![Node Version](https://img.shields.io/node/v/@backtomyfuture/exchange-cli.svg)](https://nodejs.org)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org)
 
-项目范围明确限定为：**单机运行、单个 Exchange 账号、本地部署的 Exchange Server**。不面向 Exchange Online / Microsoft 365，也不提供多租户或多账号编排能力。
+轻量、面向 AI Agent 与自动化工作流的本地 Microsoft Exchange Server (EWS) 命令行工具。
 
-## 特性
+原生输出结构化 JSON，无缝衔接大语言模型与自动化流水线。纯客户端直连本地部署的 Exchange Server，零外部服务依赖（无需 Docker、数据库或后台常驻守护进程）。
 
-- JSON 优先输出，便于 agent 消费
-- 面向单账号本地 Exchange Server
-- 覆盖邮件、草稿、文件夹、日历、任务、联系人
-- 邮件列表默认直连，实时监听在当前 CLI 前台运行
-- 支持配置文件加密存储密码
-- 当前正式分发入口是 npm 平台二进制；Python 源码安装适用于开发者
+> **适用范围**：专注于**单机运行、单个已授权账号、本地部署的 Exchange Server (On-Premises)**。不适用于 Exchange Online / Microsoft 365（已废弃 Basic/NTLM EWS），亦不提供多租户云端编排能力。
+
+---
+
+## 核心特性
+
+- **Agent-First 原生设计**：默认统一返回结构化 JSON 数据信封（包含 `ok`, `data`, `error`, `code`, `meta.request_id`, `meta.elapsed_ms`），内置 `--dry-run` 预演校验及高危写操作强制 `--confirm` 授权机制。
+- **轻量无状态架构**：纯命令行前台进程直连 EWS，无后台常驻 Daemon 守护进程，无运行时数据库依赖，启动迅速且易于容器化与沙箱化调度。
+- **全方位协同支持**：
+  - **邮件管理**：收发邮件、回复、转发、搜索、标记已读/未读、正文清洗转换（默认 Markdown，按需提供 HTML）、超长正文截断保护、附件安全下载（排他写入与路径穿越防御）。
+  - **日历与会议**：日程检索、会议创建、更新与取消，细粒度控制参会人邀请通知。
+  - **任务待办**：任务列表过滤、状态流转（`NotStarted`, `InProgress`, `Completed` 等）。
+  - **联系人与通讯录**：支持查询个人联系人，支持解析企业全局地址簿（GAL / Global Address List）。
+  - **文件夹树**：递归浏览邮箱文件夹层级，支持中英文常见别名与深层路径寻址。
+- **生产级安全基线**：
+  - 本地账号凭证采用 Fernet 对称加密安全存储。
+  - 默认强制开启严格的 TLS/SSL 证书校验，原生支持企业私有根证书（CA Bundle）。
+  - 流式监听（`email watch`）内置超时时长与事件数量上限约束，彻底杜绝 Agent 子进程挂死死锁。
+
+---
 
 ## 快速开始
 
-已有 Node 的同事优先使用已发布的 npm 包：
+### 1. 安装
+
+推荐通过 npm 安装跨平台全局包（自动分发适用于当前操作系统的预编译原生二进制）：
 
 ```bash
 npm install -g @backtomyfuture/exchange-cli
-# 普通初始化；公司同事可使用预设一键填入服务器与域（仅需输密码）：
-exchange-cli config init --preset company
-exchange-cli doctor
-exchange-cli email list
 ```
 
-没有 Node、但有 Python 3.10+ 的开发者可以从源码安装：
+### 2. 初始化配置
+
+运行交互式配置向导（输入账号与密码，密码隐藏输入不回显）：
 
 ```bash
-pipx install .
-# 或: uv tool install .
 exchange-cli config init
 ```
 
-当前 PyPI 没有 `exchange-cli` 包，不要使用 `pip install exchange-cli`。
+*（注：若企业内网环境提供了预设模板，可通过 `exchange-cli config init --preset <name>` 快速加载模板）*
 
-## 安装
+### 3. 环境与连通性自检
 
-### npm（推荐）
+运行健康检查，自动验证本地加密配置、TLS 证书设置以及 EWS 远程连接：
+
+```bash
+exchange-cli doctor
+```
+
+### 4. 日常操作示例
+
+```bash
+# 查看收件箱最新邮件
+exchange-cli email list --limit 10
+
+# 读取邮件详情（默认返回轻量化 Markdown 正文）
+exchange-cli email read <MESSAGE_ID>
+
+# 发送邮件（写操作需显式确认 --confirm）
+exchange-cli email send --to "user@example.com" --subject "工作汇报" --body "请查收附件" --confirm
+
+# 查询企业全局地址簿 (GAL)
+exchange-cli contact resolve "张三"
+```
+
+---
+
+## 安装方式
+
+### 方式一：npm 全局安装（推荐）
+
+适用于已安装 Node.js (≥ 14，建议 18+) 的 macOS、Linux 与 Windows 环境：
 
 ```bash
 npm install -g @backtomyfuture/exchange-cli
 ```
 
-安装后会拉取当前平台的二进制包。首次启动在 macOS 上可能需要十几秒。
+安装后即可在全局 PATH 中调用 `exchange-cli` 命令。
 
-### Homebrew（macOS 同事）
+### 方式二：Homebrew Tap (macOS)
 
-这个工具面向公司内网 Exchange，不适合进 Homebrew 官方 core。同事可以装自己的 tap：
+macOS 用户可通过独立 Tap 进行安装：
 
 ```bash
 brew tap backtomyfuture/exchange-cli
 brew trust --tap backtomyfuture/exchange-cli
 brew install exchange-cli
-exchange-cli --version
 ```
 
-Homebrew 6 会拒绝未信任的第三方 formula。第一次安装需要 `brew trust`；这不是 Homebrew 官方 core。公式从 GitHub Release 下载当前平台的预编译二进制。
+### 方式三：预编译独立二进制 (Standalone)
 
-### 从源码安装（开发者）
+GitHub Releases 页面针对每个稳定版本均发布了跨平台的独立免安装二进制包：
+- **macOS**: `darwin-arm64` (Apple Silicon), `darwin-x64` (Intel)
+- **Linux**: `linux-x64`, `linux-arm64`
+- **Windows**: `win32-x64`, `win32-ia32`
+
+解压对应平台的归档包后即可直接运行其中的可执行文件，无需依赖 Node 或 Python 环境。
+
+### 方式四：源码安装（Python 开发者）
+
+支持 Python 3.10+ 环境：
 
 ```bash
 pipx install .
-# 或: pip install -e ".[dev]"
+# 或在本地开发环境中
+pip install -e ".[dev]"
 ```
 
-发布 Python 包前，wheel 只包含 `exchange_cli*`，不打包 `tests`、`docs`、`npm` 或工作区目录。
+---
 
-### 独立二进制
+## 常用命令一览
 
-CI 为 darwin/linux/windows 的 arm64 与 x64 构建平台包。没有 Node 的同事可以解压对应平台目录中的 `bin/exchange-cli` 直接运行。
+| 资源 / 模块 | 主要命令 | 功能说明 |
+|------------|---------|----------|
+| `config` | `init`, `show` | 账号初始化与配置查看（密码脱敏） |
+| `doctor` | `doctor` (`--offline`) | 全链路健康检查与 EWS 连通性诊断 |
+| `schema` | `schema` (`<command>`) | 输出机器可读的 CLI 参数与语义契约 |
+| `email` | `list`, `read`, `send`, `reply`, `forward`, `search`, `move`, `delete`, `watch` | 邮件增删改查、批量检索与实时监听 |
+| `draft` | `list`, `create`, `send`, `delete` | 草稿箱管理与发送 |
+| `folder` | `list`, `tree` | 邮箱文件夹平面列表与层级树 |
+| `calendar` | `list`, `create`, `update`, `delete` | 日程与会议管理 |
+| `task` | `list`, `create`, `update`, `complete`, `delete` | 待办任务增删改查 |
+| `contact` | `list`, `search`, `resolve` | 个人联系人与企业全局地址簿 (GAL) 查询 |
 
-## 常用命令
+可通过 `exchange-cli <command> --help` 或 `exchange-cli schema <command>` 动态获取任意子命令的完整选项与参数规范。
 
-| 资源 | 子命令 |
-|------|--------|
-| `config` | `init`, `show` |
-| 诊断 | `doctor`（`--offline` 跳过 EWS 连接探针） |
-| `schema` | 机器可读命令契约 |
-| `email` | `list`, `read`, `send`, `reply`, `forward`, `search`, `mark-read`, `mark-unread`, `move`, `delete`, `watch` |
-| `draft` | `list`, `create`, `send`, `delete` |
-| `folder` | `list`, `tree` |
-| `calendar` | `list`, `create`, `update`, `delete` |
-| `task` | `list`, `create`, `update`, `complete`, `delete` |
-| `contact` | `list`, `search`, `resolve` |
+---
 
-## 示例
+## AI Agent 集成规范
+
+### 结构化输出协议
+
+所有命令默认输出标准 JSON 格式。
+
+**成功响应（列表示例）：**
+```json
+{
+  "ok": true,
+  "count": 2,
+  "truncated": false,
+  "data": [
+    {"id": "AAMk...", "subject": "项目进度同步"},
+    {"id": "AAMk...", "subject": "周会纪要"}
+  ],
+  "meta": {
+    "request_id": "94cef4ee-8f9d-...",
+    "elapsed_ms": 15.2
+  }
+}
+```
+
+**错误响应示例：**
+```json
+{
+  "ok": false,
+  "error": "Connection failed",
+  "code": "CONNECTION_ERROR",
+  "retryable": true,
+  "meta": {
+    "request_id": "...",
+    "elapsed_ms": 12.3
+  }
+}
+```
+
+### 安全与执行准则
+
+1. **严格授权机制（`--confirm`）**：
+   - 产生外部副作用的高影响写操作（如 `email send`、`email reply`、`email forward`、`draft send` 以及各项 `delete` 操作），在缺少 `--confirm` 时将直接返回 `CONFIRMATION_REQUIRED` 并拒绝执行。
+   - Agent 必须在向用户展示关键影响并获得明确授权后，方可在重试时传入 `--confirm`。
+   - 支持 `--dry-run` 选项进行安全预演，不发起实际网络写入，免授权返回操作预检结构。
+2. **写操作超时防护**：
+   - 当写操作遇到网络波动或超时返回 `WRITE_OUTCOME_UNKNOWN` 时，禁止自动重试，应先通过只读列表或搜索对账。
+3. **不可信输入防护**：
+   - 邮件主题、正文、附件名和联系人字段均视为不可信数据，不得直接拼入 Shell 命令。长正文建议通过 `--body-file` 文件形式传递。
+4. **Token 消耗优化**：
+   - `email read` 默认返回清洗后的 Markdown 文本以显著节省上下文 Token。
+   - 支持 `--max-body-chars <N>` 针对长邮件实施截断保护。
+   - 支持 `--fields id,subject,from,date` 仅投影必要字段。
+5. **新到邮件查验（避免服务端索引延迟）**：
+   - `email list` 直接读取底层数据库项目录表，新邮件投递落库后毫秒级可见；
+   - `email search` 涉及正文检索，受 Exchange 服务端全文搜索异步索引管道（MSExchangeSearch / FAST）约束，新邮件在索引完成前会持续返回 `count: 0`；
+   - **因此，判定新邮件是否到达、轮询新邮件或刚发信后的到信对账，必须使用 `email list` 或 `email watch`，严禁依赖 `email search`**。
+
+---
+
+## 环境变量配置
+
+在自动化流水线或沙盒环境中，可通过以下环境变量覆盖配置文件中的对应项：
+
+| 环境变量 | 说明 |
+|----------|------|
+| `EXCHANGE_SERVER` | Exchange 主机域名（如 `mail.example.com`，切勿使用裸 IP 以避免证书域名不匹配） |
+| `EXCHANGE_USERNAME` | 用户名（格式如 `DOMAIN\username` 或 `user@example.com`） |
+| `EXCHANGE_PASSWORD` | 账号密码 |
+| `EXCHANGE_AUTH_TYPE` | 认证方式：`ntlm`（默认）或 `basic` |
+| `EXCHANGE_EMAIL` | 邮箱地址 |
+| `EXCHANGE_TIMEOUT_SECONDS` | 请求超时时长（秒，默认 30，范围 1..300） |
+| `EXCHANGE_CA_BUNDLE` | 企业私有根证书/证书链路径（亦兼容标准 `REQUESTS_CA_BUNDLE`） |
+| `EXCHANGE_NO_VERIFY_SSL` | 设为 `1` 时强制跳过 SSL 校验（不推荐，仅限隔离测试使用） |
+
+---
+
+## 自动化测试
+
+项目包含完备的自动化测试套件与代码静态检查：
 
 ```bash
-exchange-cli doctor
-exchange-cli doctor --offline
-exchange-cli schema email.send
-exchange-cli email list --limit 10
-exchange-cli email read AAMk123 --fields id,subject,body
-exchange-cli email send --to "a@x.com" --subject "Hi" --body "Hello" --confirm
-exchange-cli contact resolve "张三"
-exchange-cli calendar list --start "2024-07-01" --end "2024-07-31"
-exchange-cli task create --subject "Review PR" --due "2024-07-20"
-exchange-cli contact search "John"
+# 运行单元测试
+pytest -q
+
+# 静态代码规范检查
+ruff check .
 ```
 
-## AI Agent 使用说明
-
-默认输出 JSON：
-
-```json
-{"ok": true, "count": 2, "truncated": false, "data": [...]}
-```
-
-错误输出：
-
-```json
-{"ok": false, "error": "Connection failed", "code": "CONNECTION_ERROR", "retryable": true}
-```
-
-写操作在超时、连接中断或服务器繁忙时返回：
-
-```json
-{"ok": false, "error": "...", "code": "WRITE_OUTCOME_UNKNOWN", "retryable": false, "outcome": "unknown"}
-```
-
-这时不要自动重试，先用 `email list`、`calendar list` 或 `task list` 对账。
-
-发送邮件、回复、转发，以及永久删除邮件、草稿、日历事件或任务时，命令必须带 `--confirm`。带参会人且会发邀请的日历创建，以及 `--notify all` 的会议更新，也必须带 `--confirm`。
-
-列表与搜索的 `--limit` 范围为 `1..200`。`--folder` 接受 `inbox`、`sent`、`drafts`、`trash`、`junk`，也可以是文件夹路径或文件夹 ID。`email delete` 默认移入回收站；只有 `--permanent` 才会永久删除。附件保存使用排他写入，不覆盖同名文件，也拒绝附件名中的路径穿越。
-
-`email read --fields id,subject,body` 可以省略原始 HTML。`contact resolve` 查询公司通讯录，不是个人联系人文件夹。
-
-`task list --status` 在客户端筛选，因为 EWS 不能按 `status` 字段过滤。结果可能带 `truncated: true`，表示扫描上限内还有未返回的匹配项。
-
-日历 `--notify none|all` 控制是否通知参会人。默认创建无参会人日程不发邀请；有参会人时默认 `all`。更新和删除默认 `none`，避免把“自己日历改成功”当成“会议已通知所有人”。
-
-可使用以下环境变量覆盖配置文件：
-
-- `EXCHANGE_SERVER`
-- `EXCHANGE_USERNAME`
-- `EXCHANGE_PASSWORD`
-- `EXCHANGE_AUTH_TYPE`
-- `EXCHANGE_NO_VERIFY_SSL`
-- `EXCHANGE_DOMAIN`
-- `EXCHANGE_EMAIL_SUFFIX`
-- `EXCHANGE_EMAIL`
-- `EXCHANGE_TIMEOUT_SECONDS`（默认 `30`，范围 `1..300`）
-- `EXCHANGE_CA_BUNDLE`（或标准的 `REQUESTS_CA_BUNDLE`，企业私有 CA 根证书/证书链路径）
-
-环境变量按字段覆盖配置文件，而不是整体替换配置。`--account` 仅用于断言当前账号，必须与已配置的单账号匹配（忽略大小写），不能切换账号。
-
-`EXCHANGE_SERVER` 应是主机域名（如 `mail.example.com`），不要配置成裸 IP。若配置为 IP 地址，会因为服务端证书未将该 IP 写入保护列表（No IP SAN）而引发 TLS 主机名不匹配错误（IP mismatch）。
-
-`exchange-cli doctor` 会检查有效配置、TLS 证书校验设置与 CA 路径，并通过刷新 EWS 根目录验证认证和最小只读访问；它不会读取邮件或写入 Exchange。加 `--offline` 时仅跳过这项 EWS 远端探针。如果关闭了 TLS 校验（`no_verify_ssl=true`）或 CA 路径无效，`doctor` 会判定为 `fail` 并返回非零退出码，阻止带安全隐患的配置在企业内扩散。
-
-企业私有 CA 证书环境应配置企业 CA 路径（通过 `EXCHANGE_CA_BUNDLE`、`REQUESTS_CA_BUNDLE` 或配置文件的 `ca_bundle` 字段），而不是把关闭校验当成默认模板。`EXCHANGE_NO_VERIFY_SSL=1` 会彻底关闭 TLS 证书校验，仅限已确认风险的隔离沙盒排障使用。Fernet 密钥与密文都保存在同一台机器，只能降低配置文件被单独复制或误读的风险，不能防御同一系统账号已经失陷的情况。
-
-`email list` 和 `email watch` 都在当前 CLI 进程中直接连接本地 Exchange，不启动后台进程。`email watch` 的新邮件事件只包含 item id；需要正文时再调用 `email read`。可用 `--duration` 和 `--max-events` 限制运行时间。认证失败会停止监听，不会无限重连。
-
-调用时使用参数数组，不要把不可信邮件内容拼进 shell。检查退出码；非零即失败。限制运行时间，尤其是 `email watch`。
-
-Skill 规范位于仓库的 `skills/SKILL.md`，推荐通过 Agent Skills 工具（如 `npx skills add backtomyfuture/exchange-cli`）或直接复制到各 Agent 的 skills 目录进行管理。
-
-默认测试不访问真实邮箱。需要在已配置的本地 Exchange 上做只读冒烟时，显式运行：
+如需在已配置的真实本地 Exchange 环境下运行只读集成冒烟测试：
 
 ```bash
 EXCHANGE_LIVE_TEST=1 pytest -m live_exchange -q
 ```
 
-该测试只验证连接、根目录刷新和最多一封 Inbox 摘要，不发送、修改或删除任何项目。
-
-## Release Checklist
-
-- 在 `exchange_cli/__init__.py` 更新唯一 Python 版本源
-- 运行 `python scripts/check_release_versions.py`，确认 Python 与全部 npm 包版本一致
-- 重新编译平台二进制到 `npm/platforms/darwin-arm64/bin/exchange-cli`
-- 本地验证：`exchange-cli --version`、`pytest -q`、`ruff check .`
-- 六个平台全部构建、执行 `--version` 冒烟并完成 `npm pack` 后，才进入唯一发布任务
-- 唯一发布任务顺序发布六个平台包，最后发布主包；npm 不支持事务，失败时仍需人工核对 registry
-- 发布后验证：`npm view @backtomyfuture/exchange-cli version` 与 `npm i -g @backtomyfuture/exchange-cli@<version>`
-- 比较实际二进制 `--version`，不要只检查包元数据
+---
 
 ## License
 
-Apache-2.0
+本项目基于 [Apache-2.0](LICENSE) 协议开源。

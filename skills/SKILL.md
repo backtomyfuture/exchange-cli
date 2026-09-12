@@ -1,7 +1,7 @@
 ---
 name: exchange-cli
 description: |
-  本地部署的 Microsoft Exchange Server 单账号 CLI：读取、搜索、发送、回复和转发邮件，标记已读、移动、删除，管理草稿、日历、任务、联系人（含公司通讯录解析）和文件夹，并前台监听新邮件。
+  本地部署的 Microsoft Exchange Server 单账号 CLI：读取、搜索、发送、回复和转发邮件，标记已读、移动、删除，管理草稿、日历、任务、联系人（含企业全局地址簿 GAL 解析）和文件夹，并前台监听新邮件。
   当用户要配置、测试、排查或操作当前机器上的本地 Exchange/EWS 邮箱时使用，包括“配置 Exchange”“exchange-cli 连接不上”“查邮件”“发邮件”“看日程”“建会议”“完成任务”“找同事”“找联系人”“监听新邮件”等请求。
   如果用户只说 Outlook、但未说明邮箱后端，先确认是否为本地 Exchange Server。
   不适用于 Exchange Online / Microsoft 365、Gmail、飞书邮箱或其他云邮箱。
@@ -58,6 +58,9 @@ exchange-cli email send --help
 ```
 
 4. 环境与 PATH 前提：若直接调用 `exchange-cli` 报错 `command not found`（常见于非交互式 Shell 未加载 profile，如某些 Agent 宿主 PATH 缺少 `/opt/homebrew/bin`），先用 `command -v exchange-cli` 探测；若未在 PATH 中，可回退使用 `/opt/homebrew/bin/exchange-cli`，或在命令前补充 `export PATH="/opt/homebrew/bin:$PATH"`。
+5. **判断新邮件到达必须使用 `email list` 或 `email watch`，绝不要依赖 `email search`**：
+   - `email list` 直接读取底层存储项目录表，新邮件投递入库后毫秒级立即可见；
+   - `email search` 底层包含正文（`item:Body`）检索，强制走 Exchange 服务端异步内容索引管道（MSExchangeSearch/FAST）。刚到达或自发自收的邮件通常有数十秒至数分钟的索引延迟，在索引就绪前 `search` 会持续返回 `count: 0`。对账与新邮件检测严禁使用 `search`。
 
 全局参数推荐放在命令组之前，同时也支持后置于子命令末尾：
 
@@ -110,7 +113,7 @@ exchange-cli doctor
 
 ```bash
 exchange-cli config init
-# 支持 --preset 预设（免输服务器与域）：company、tianjin-air（两者等价）、custom
+# 支持 --preset 预设（免输服务器与域）：company、custom 等
 exchange-cli config init --preset company
 # 支持通过 --ca-bundle 指定私有企业根证书：
 exchange-cli config init --ca-bundle /path/to/corporate-ca.pem
@@ -120,18 +123,18 @@ exchange-cli config init --insecure
 exchange-cli config init --auth-type basic
 ```
 
-### config init 交互序列（`--preset company` / `tianjin-air`）
+### config init 交互序列
 
-`config init` **只有交互式入口**，没有任何非交互传密码的选项——密码必须由用户在自己终端里输入，Agent 不得代输、不得回显。预设取值：`company` 与 `tianjin-air` 完全等价，均为 `server=mail.hnair.net`、`domain=hnanet`、`email_suffix=tianjin-air.com`、`auth_type=ntlm`。
+`config init` **只有交互式入口**，没有任何非交互传密码的选项——密码必须由用户在自己终端里输入，Agent 不得代输、不得回显。若指定了 `--preset <name>`，系统将自动预填充企业预设参数（如服务器地址、域名称和邮箱后缀）。
 
 依次提示 4 项（回车采纳默认值）：
 
-| # | 提示 | 预设下的默认值 | 注意 |
+| # | 提示 | 默认值规则 | 注意 |
 |---|---|---|---|
-| 1 | Exchange Server | `mail.hnair.net` | 勿用裸 IP，否则证书域名不匹配 |
-| 2 | Username | `hnanet\<本机 $USER>` | ⚠️ **默认值由本机登录名推导，往往不是目标账号**，须手输真实账号（`DOMAIN\user` 或 `user@domain.com` 均可） |
+| 1 | Exchange Server | 环境变量或预设值（如 `mail.example.com`） | 勿用裸 IP，否则证书域名不匹配 |
+| 2 | Username | `DOMAIN\<本机 $USER>` | ⚠️ **默认值由本机登录名推导，往往不是目标账号**，须手输真实账号（`DOMAIN\user` 或 `user@domain.com` 均可） |
 | 3 | Password | 无 | 隐藏输入 |
-| 4 | Email address | 由 username 去掉 `DOMAIN\` 与 `@` 后段 + `@tianjin-air.com` 推导 | 若第 2 步输对账号，此项通常自动正确 |
+| 4 | Email address | 由 username 去掉域前缀与 `@` 后段自动推导 | 若第 2 步输对账号，此项通常自动正确 |
 
 > **配置项默认与简化说明**：
 > - **认证类型（Auth type）**：默认自动使用 `ntlm`（企业本地部署 Exchange 的标准认证），无需手工交互选择。若需使用 `basic` 认证，可通过 `--auth-type basic` 选项或 `EXCHANGE_AUTH_TYPE=basic` 环境变量指定。
@@ -231,12 +234,12 @@ exchange-cli config show
 - 含非邮件项文件夹与回收站：对于 `trash` 等混有已删除联系人/日程/任务的文件夹，`email list` 与 `email search` 自动过滤非邮件项，输出 `count` 仅统计邮件，并在顶层返回 `skipped_items: N` 计数（`email list` 统计客户端跳过的非邮件项；`email search` 走服务端过滤）；若无邮件则安全返回 `data: []` 且 `count: 0`，绝不崩溃。注意 `truncated` 反映的是底层原始分页抓取量，在非邮件项占满分页时可能出现 `count: 0` 且 `truncated: true`。
 - 列表命令的 `--limit` 范围为 `1..200`，默认值：`email list` / `email search` 默认为 `20`；`contact list` 默认为 `50`；`contact search` / `contact resolve` 默认为 `20`。列表结果带 `truncated`。
 - `email watch` 同样支持上述全套文件夹定位机制，必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。支持通过 `SIGINT`（Ctrl+C）或 `SIGTERM` 优雅中断，Node 包装器会即时转发信号并回收底层 EWS 流式订阅与连接，彻底杜绝孤儿进程。
-- `email search` 支持关键字 `query`、`--from` 发件人（未传该选项则不进行过滤且顶层无 `from_resolved` 字段；传空值报错 `INVALID_INPUT`；支持邮箱或人名，中文名含空格如 `张 霞` 亦可自动去空反查通讯录；传了非空值时输出 `from_resolved: true/false` 区分通讯录未命中与无邮件）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。
+- `email search` 支持关键字 `query`、`--from` 发件人（未传该选项则不进行过滤且顶层无 `from_resolved` 字段；传空值报错 `INVALID_INPUT`；支持邮箱或人名，中文名含空格如 `张 霞` 亦可自动去空反查通讯录；传了非空值时输出 `from_resolved: true/false` 区分通讯录未命中与无邮件）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。⚠️ **索引延迟警示**：`email search` 存在服务端异步全文索引延迟（实测新送达邮件在数十秒甚至更长时间内返回 `count: 0`），**严禁用 `search` 轮询检查新邮件是否到达；查验新邮件必须使用 `email list`**。
 - `email send` 与 `draft create`：支持 `--attach <path>` 携带文件附件（可多传），支持 `--body-type [text|html]`（默认 text）；支持 `--cc` 抄送收件人；`email send` 还支持 `--bcc` 密送收件人。
 - `calendar create` 与 `calendar update`：支持 `--location` 指定会议地点。`calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`（大小写不敏感，如 `notstarted` 亦可接受）。`--status` 在客户端筛选。
-- 找同事用 `contact resolve`（公司通讯录/GAL），不要只用个人联系人 `contact search`。`contact resolve` 与 `contact search` 均校验非空查询（空值返回 `INVALID_INPUT`）。
+- 查找组织成员/同事用 `contact resolve`（企业全局地址簿/GAL），不要只用个人联系人 `contact search`。`contact resolve` 与 `contact search` 均校验非空查询（空值返回 `INVALID_INPUT`）。
 - `calendar list` 不传参数默认查询当天（无 `--today` 选项）；指定范围时 `--end YYYY-MM-DD` 含当天，查询某一天应传相同 start/end 或直接不传参数。
 - `email delete` 默认移入回收站；永久删除必须同时给 `--permanent --confirm`。
 - 会议邀请与更新：带参会人的 `calendar create` 默认发送通知（需要 `--confirm`），但若指定 `--notify none` 则不发通知且免 `--confirm`；会议更新默认不通知参会人（`--notify all` 才会发通知，且需要 `--confirm`）；删除会议始终需要 `--confirm`，指定 `--notify all` 会额外发送会议取消通知。
@@ -270,7 +273,7 @@ exchange-cli email delete MESSAGE_ID --confirm
 exchange-cli email delete MESSAGE_ID --permanent --confirm
 ```
 
-搜索邮件：
+搜索邮件（⚠️ 注意：search 依赖服务端全文索引，存在数秒至数分钟的异步索引延迟；查验新邮件或对账请用 `email list`，勿用 search）：
 
 ```bash
 exchange-cli email search "关键词" --folder inbox --start "YYYY-MM-DD" --end "YYYY-MM-DD"
