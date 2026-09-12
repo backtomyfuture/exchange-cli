@@ -36,6 +36,7 @@ Issues = "https://github.com/backtomyfuture/exchange-cli/issues"
 dev = [
     "pytest>=7.0",
     "ruff>=0.4",
+    "setuptools>=68.0",
 ]
 
 [tool.ruff]

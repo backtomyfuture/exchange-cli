@@ -12,6 +12,7 @@ def test_cryptography_range_preserves_legacy_release_platforms():
     pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
 
     assert '"cryptography>=41.0,<49"' in pyproject
+    assert '"setuptools>=68.0"' in pyproject
 
 
 def test_release_builds_every_platform_before_any_publish():
