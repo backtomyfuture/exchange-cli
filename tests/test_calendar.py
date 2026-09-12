@@ -43,9 +43,20 @@ class TestCalendarList:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
+        assert data["truncated"] is False
         start, end = mock_conn.calendar.view.call_args.kwargs["start"], mock_conn.calendar.view.call_args.kwargs["end"]
         assert (start.year, start.month, start.day) == (2024, 7, 15)
         assert (end.year, end.month, end.day) == (2024, 7, 16)
+
+    def test_list_with_limit_and_truncation(self, runner, mock_conn):
+        mock_events = [MagicMock() for _ in range(3)]
+        mock_conn.calendar.view.return_value = mock_events
+        result = runner.invoke(cli, ["calendar", "list", "--limit", "2"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["count"] == 2
+        assert data["truncated"] is True
 
 
 class TestCalendarCreate:

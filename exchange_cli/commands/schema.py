@@ -104,7 +104,7 @@ COMMANDS = [
         "name": "calendar.list",
         "write": False,
         "confirm": False,
-        "summary": "List calendar events in a local-time range.",
+        "summary": "List calendar events in a local-time range with --limit.",
     },
     {
         "name": "calendar.create",

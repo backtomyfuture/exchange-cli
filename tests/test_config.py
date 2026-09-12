@@ -388,3 +388,13 @@ class TestConfigManager:
         with pytest.raises(CliError) as caught:
             cm.save_account("a@x.com", "s.com", "u", "secret", "ntlm", ca_bundle="   ")
         assert caught.value.code == "CONFIG_INVALID"
+
+    def test_windows_config_operations_without_posix_permissions(self, cm, monkeypatch):
+        monkeypatch.setattr("exchange_cli.core.config._is_windows", lambda: True)
+        _fsync_directory(cm.config_dir)
+        _secure_file_descriptor(0)
+        cm.save_account("win@example.com", "mail.example.com", "DOMAIN\\win", "pass123", "ntlm")
+        loaded = cm.load_config()
+        assert loaded["default_account"] == "win@example.com"
+        creds = cm.get_account_credentials("win@example.com")
+        assert creds["password"] == "pass123"

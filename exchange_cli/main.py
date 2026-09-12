@@ -34,6 +34,69 @@ def _format_from_args(args) -> str:
     return "json"
 
 
+GLOBAL_VALUE_OPTIONS = {"--format", "--config", "--account"}
+GLOBAL_FLAG_OPTIONS = {"--verbose", "-v"}
+KNOWN_PARAMETRIZED_OPTIONS = {
+    "--to", "--cc", "--bcc", "--subject", "--body", "--body-file",
+    "--body-format", "--fields", "--save-attachments", "--folder",
+    "--limit", "--start", "--end", "--location", "--attendees",
+    "--notify", "--due", "--status", "--ca-bundle", "--preset",
+}
+
+
+def _hoist_global_args(args: list[str]) -> list[str]:
+    """Allow human users to specify top-level global options anywhere in the command line.
+
+    For example, moves trailing '--format text' or '--account foo' before the subcommand:
+        ['email', 'list', '--format', 'text'] -> ['--format', 'text', 'email', 'list']
+    """
+    args = list(args)
+    hoisted: list[str] = []
+    remaining: list[str] = []
+
+    index = 0
+    while index < len(args):
+        arg = args[index]
+
+        # Explicit option with value via '=': e.g. --format=text
+        matched_prefix = next((opt for opt in GLOBAL_VALUE_OPTIONS if arg.startswith(f"{opt}=")), None)
+        if matched_prefix:
+            hoisted.append(arg)
+            index += 1
+            continue
+
+        # Option with value in the next token: e.g. --format text
+        if arg in GLOBAL_VALUE_OPTIONS:
+            hoisted.append(arg)
+            if index + 1 < len(args):
+                hoisted.append(args[index + 1])
+                index += 2
+            else:
+                index += 1
+            continue
+
+        # Global flag option: e.g. --verbose or -v
+        if arg in GLOBAL_FLAG_OPTIONS:
+            hoisted.append(arg)
+            index += 1
+            continue
+
+        # If this is a known subcommand option that consumes a parameter, preserve both
+        if arg in KNOWN_PARAMETRIZED_OPTIONS:
+            remaining.append(arg)
+            if index + 1 < len(args):
+                remaining.append(args[index + 1])
+                index += 2
+            else:
+                index += 1
+            continue
+
+        remaining.append(arg)
+        index += 1
+
+    return hoisted + remaining
+
+
 class LazyGroup(click.Group):
     """Click Group that defers command module imports until the command is invoked."""
 
@@ -58,9 +121,10 @@ class LazyGroup(click.Group):
         """Run Click without its human-only exception renderer."""
 
         raw_args = list(sys.argv[1:] if args is None else args)
+        normalized_args = _hoist_global_args(raw_args)
         try:
             return super().main(
-                args=raw_args,
+                args=normalized_args,
                 prog_name=prog_name,
                 complete_var=complete_var,
                 standalone_mode=False,

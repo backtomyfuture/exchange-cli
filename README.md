@@ -19,7 +19,8 @@
 
 ```bash
 npm install -g @backtomyfuture/exchange-cli
-exchange-cli config init
+# 普通初始化；公司同事可使用预设一键填入服务器与域（仅需输密码）：
+exchange-cli config init --preset company
 exchange-cli doctor
 exchange-cli email list
 ```
@@ -156,7 +157,7 @@ exchange-cli contact search "John"
 
 调用时使用参数数组，不要把不可信邮件内容拼进 shell。检查退出码；非零即失败。限制运行时间，尤其是 `email watch`。
 
-Skill 位于仓库 `skills/SKILL.md`，当前 npm 包不包含它。把该文件复制到 agent 的 skill 目录即可。
+Skill 位于 `skills/SKILL.md`，已随 npm 包一并分发（安装后位于 package 的 `skills/` 目录），也可直接从仓库复制到 agent 的 skills 目录。
 
 默认测试不访问真实邮箱。需要在已配置的本地 Exchange 上做只读冒烟时，显式运行：
 

@@ -71,6 +71,27 @@ class TestConfigInit:
         assert result.exit_code == 0
         assert json.loads((config_dir / "config.json").read_text(encoding="utf-8"))["version"] == 1
 
+    def test_init_with_preset_company(self, runner, tmp_path, monkeypatch):
+        monkeypatch.setenv("USER", "testuser")
+        config_dir = tmp_path / ".exchange-cli"
+        with patch("exchange_cli.commands.config.probe_connection", return_value=True):
+            # Press enter for server (10.72.8.110), enter for username (hnanet\testuser),
+            # enter password, enter for auth (ntlm), enter for email (testuser@tianjin-air.com),
+            # enter n for disable ssl
+            result = runner.invoke(
+                cli,
+                ["--config", str(config_dir), "config", "init", "--preset", "company"],
+                input="\n\nsecret123\n\n\nn\n",
+            )
+
+        assert result.exit_code == 0
+        saved = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
+        assert saved["default_account"] == "testuser@tianjin-air.com"
+        account = saved["accounts"]["testuser@tianjin-air.com"]
+        assert account["server"] == "mail.hnair.net"
+        assert account["username"] == "hnanet\\testuser"
+        assert account["auth_type"] == "ntlm"
+
 class TestConfigShow:
     def test_show_json(self, runner, tmp_path):
         from exchange_cli.core.config import ConfigManager

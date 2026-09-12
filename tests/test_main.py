@@ -94,3 +94,32 @@ def test_schema_single_command(runner):
     assert payload["name"] == "email.send"
     assert payload["write"] is True
     assert payload["confirm"] is True
+
+
+def test_trailing_format_option_is_hoisted(runner):
+    result = runner.invoke(cli, ["email", "send", "--format", "text"])
+
+    assert result.exit_code == 2
+    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"
+
+
+def test_trailing_config_option_is_hoisted(runner, tmp_path):
+    clean_env = {
+        "EXCHANGE_SERVER": None,
+        "EXCHANGE_USERNAME": None,
+        "EXCHANGE_PASSWORD": None,
+        "EXCHANGE_DOMAIN": None,
+        "EXCHANGE_EMAIL": None,
+    }
+    result = runner.invoke(cli, ["email", "list", "--config", str(tmp_path)], env=clean_env)
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "CONFIG_NOT_FOUND"
+
+
+def test_trailing_format_equal_syntax_is_hoisted(runner):
+    result = runner.invoke(cli, ["email", "send", "--format=text"])
+
+    assert result.exit_code == 2
+    assert result.stdout == "Error [INVALID_INPUT]: Missing option '--to'.\n"

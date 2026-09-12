@@ -36,9 +36,13 @@ CONFIG_ENV_VARS = (
 )
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def _fsync_directory(path: Path) -> None:
     """Persist a directory entry where the platform supports directory handles."""
-    if os.name == "nt":
+    if _is_windows():
         return
     directory_fd = os.open(path, os.O_RDONLY)
     try:
@@ -49,7 +53,7 @@ def _fsync_directory(path: Path) -> None:
 
 def _secure_file_descriptor(descriptor: int) -> None:
     """Restrict a newly created file on POSIX; Windows uses the user's ACL."""
-    if os.name == "nt":
+    if _is_windows():
         return
     os.fchmod(descriptor, 0o600)
 
@@ -79,10 +83,11 @@ class ConfigManager:
                 raise CliError("Could not create configuration directory.", code="CONFIG_WRITE_FAILED") from exc
         else:
             return
-        try:
-            self.config_dir.chmod(0o700)
-        except OSError as exc:
-            raise CliError("Could not secure configuration directory.", code="CONFIG_INVALID") from exc
+        if not _is_windows():
+            try:
+                self.config_dir.chmod(0o700)
+            except OSError as exc:
+                raise CliError("Could not secure configuration directory.", code="CONFIG_INVALID") from exc
 
     def _load_key(self) -> bytes:
         self._ensure_private_config_dir(create=False)
@@ -96,7 +101,8 @@ class ConfigManager:
         if not self.key_path.is_file():
             raise CliError("Configuration key is not a regular file.", code="CONFIG_INVALID")
         try:
-            self.key_path.chmod(0o600)
+            if not _is_windows():
+                self.key_path.chmod(0o600)
             key = self.key_path.read_bytes()
             Fernet(key)
         except (OSError, TypeError, ValueError) as exc:
@@ -297,7 +303,8 @@ class ConfigManager:
         if not self.config_path.is_file():
             raise CliError("Configuration path is not a regular file.", code="CONFIG_INVALID")
         try:
-            self.config_path.chmod(0o600)
+            if not _is_windows():
+                self.config_path.chmod(0o600)
             with self.config_path.open(encoding="utf-8") as handle:
                 raw_config = json.load(handle)
         except (OSError, json.JSONDecodeError) as exc:
@@ -319,7 +326,8 @@ class ConfigManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary_path, self.config_path)
-            self.config_path.chmod(0o600)
+            if not _is_windows():
+                self.config_path.chmod(0o600)
             _fsync_directory(self.config_dir)
         except (OSError, TypeError, ValueError) as exc:
             if descriptor >= 0:

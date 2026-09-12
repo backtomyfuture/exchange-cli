@@ -9,8 +9,10 @@ from exchangelib.errors import ErrorItemNotFound
 from ..core.cli import get_account
 from ..core.errors import CliError, classify_exception, classify_write_exception
 from ..core.output import OutputFormatter
+from ..core.query import take_page
 from ..core.serializers import serialize_calendar_event
 from ..core.validation import (
+    MAX_RESULTS,
     MEETING_NOTIFY_CHOICES,
     MEETING_NOTIFY_MAP,
     ensure_start_before_end,
@@ -75,8 +77,9 @@ def calendar(ctx):
 @calendar.command("list")
 @click.option("--start", default=None, help="Start date (YYYY-MM-DD), default: today")
 @click.option("--end", default=None, help="Inclusive end date (YYYY-MM-DD), default: today")
+@click.option("--limit", default=50, type=click.IntRange(1, MAX_RESULTS), help="Max results")
 @click.pass_context
-def calendar_list(ctx, start, end):
+def calendar_list(ctx, start, end, limit):
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         timezone = EWSTimeZone.localzone()
@@ -85,9 +88,9 @@ def calendar_list(ctx, start, end):
         end_dt = _parse_list_bound(end, is_end=True, now=now, timezone=timezone)
         ensure_start_before_end(start_dt, end_dt, action="calendar.list")
         account = get_connection(ctx)
-        events = list(account.calendar.view(start=start_dt, end=end_dt))
+        events, truncated = take_page(account.calendar.view(start=start_dt, end=end_dt), limit)
         results = [serialize_calendar_event(event) for event in events]
-        formatter.success(results, count=len(results))
+        formatter.success(results, count=len(results), truncated=truncated)
     except Exception as exc:
         raise classify_exception(exc) from exc
 

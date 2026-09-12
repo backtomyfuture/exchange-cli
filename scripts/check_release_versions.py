@@ -135,6 +135,17 @@ def _check_main_manifest(repo_root: Path, version: str, errors: list[str]) -> No
                 f"{relative_path}: {dependency} expected {version!r}, found {dependencies[dependency]!r}"
             )
 
+    files = manifest.get("files")
+    if not isinstance(files, list) or "skills/" not in files:
+        errors.append(f"{relative_path}: files must include 'skills/'")
+
+    pkg_skill = repo_root / "npm" / "exchange-cli" / "skills" / "SKILL.md"
+    root_skill = repo_root / "skills" / "SKILL.md"
+    if not pkg_skill.is_file():
+        errors.append(f"{_relative(pkg_skill, repo_root)}: package skill file is missing")
+    elif root_skill.is_file() and pkg_skill.read_text(encoding="utf-8") != root_skill.read_text(encoding="utf-8"):
+        errors.append(f"{_relative(pkg_skill, repo_root)}: content differs from root skills/SKILL.md")
+
 
 def check_versions(repo_root: Path, tag: str | None = None) -> tuple[str, list[str]]:
     errors: list[str] = []

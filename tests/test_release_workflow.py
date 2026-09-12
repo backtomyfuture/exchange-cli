@@ -66,3 +66,13 @@ def test_publish_job_uses_integrity_checked_idempotent_script_for_every_package(
     assert publish_section.index("release-artifacts/platforms/*.tgz") < publish_section.index(
         "Publish main package last"
     )
+
+
+def test_pypi_publish_job_is_present_and_conditional():
+    workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "publish-pypi:" in workflow
+    assert "python -m build" in workflow
+    assert "twine upload" in workflow
+    assert "PYPI_API_TOKEN" in workflow

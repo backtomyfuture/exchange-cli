@@ -34,6 +34,22 @@ def _derive_email_from_username(username: str | None, suffix: str | None) -> str
     return f"{local_part}{normalized_suffix}"
 
 
+PRESETS = {
+    "company": {
+        "server": "mail.hnair.net",
+        "domain": "hnanet",
+        "email_suffix": "tianjin-air.com",
+        "auth_type": "ntlm",
+    },
+    "tianjin-air": {
+        "server": "mail.hnair.net",
+        "domain": "hnanet",
+        "email_suffix": "tianjin-air.com",
+        "auth_type": "ntlm",
+    },
+}
+
+
 @click.group("config")
 @click.pass_context
 def config(ctx):
@@ -42,8 +58,14 @@ def config(ctx):
 
 @config.command("init")
 @click.option("--ca-bundle", type=click.Path(dir_okay=False), default=None, help="Path to enterprise CA bundle.")
+@click.option(
+    "--preset",
+    type=click.Choice(list(PRESETS.keys()) + ["custom"], case_sensitive=False),
+    default=None,
+    help="Configuration preset (e.g. company, tianjin-air). Pre-fills enterprise server and domain settings.",
+)
 @click.pass_context
-def config_init(ctx, ca_bundle):
+def config_init(ctx, ca_bundle, preset):
     """Interactive setup for Exchange server credentials."""
     config_path = ctx.obj.get("config_path")
     config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
@@ -55,7 +77,9 @@ def config_init(ctx, ca_bundle):
             formatter.success({"message": "Configuration unchanged", "changed": False})
             return
 
-    server_default = os.environ.get("EXCHANGE_SERVER")
+    active_preset = PRESETS.get(preset.lower()) if preset and preset.lower() in PRESETS else None
+
+    server_default = os.environ.get("EXCHANGE_SERVER") or (active_preset["server"] if active_preset else None)
     if server_default:
         server = click.prompt("Exchange Server", type=str, default=server_default, show_default=True)
     else:
@@ -63,8 +87,8 @@ def config_init(ctx, ca_bundle):
 
     username_default = os.environ.get("EXCHANGE_USERNAME")
     if not username_default:
-        env_domain = os.environ.get("EXCHANGE_DOMAIN")
-        current_user = os.environ.get("USER")
+        env_domain = os.environ.get("EXCHANGE_DOMAIN") or (active_preset["domain"] if active_preset else None)
+        current_user = os.environ.get("USER") or os.environ.get("USERNAME")
         if env_domain and current_user:
             username_default = f"{env_domain}\\{current_user}"
 
@@ -79,14 +103,17 @@ def config_init(ctx, ca_bundle):
         username = click.prompt("Username (e.g. DOMAIN\\user or user@domain.com)", type=str)
 
     password = click.prompt("Password", type=str, hide_input=True)
-    auth_default = os.environ.get("EXCHANGE_AUTH_TYPE", "ntlm").lower()
+    auth_default = (
+        os.environ.get("EXCHANGE_AUTH_TYPE") or (active_preset["auth_type"] if active_preset else "ntlm")
+    ).lower()
     if auth_default not in {"ntlm", "basic"}:
         auth_default = "ntlm"
     auth_type = click.prompt("Auth type", type=click.Choice(["ntlm", "basic"]), default=auth_default)
 
     email_default = os.environ.get("EXCHANGE_EMAIL")
     if not email_default:
-        email_default = _derive_email_from_username(username, os.environ.get("EXCHANGE_EMAIL_SUFFIX"))
+        suffix = os.environ.get("EXCHANGE_EMAIL_SUFFIX") or (active_preset["email_suffix"] if active_preset else None)
+        email_default = _derive_email_from_username(username, suffix)
     if email_default:
         email = click.prompt("Email address", type=str, default=email_default, show_default=True)
     else:
