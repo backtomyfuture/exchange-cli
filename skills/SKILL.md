@@ -124,19 +124,29 @@ exchange-cli config show
 - `CONFIG_KEY_MISSING` 或 `CONFIG_DECRYPT_FAILED` 时停止并请求用户处理；不要擅自删除或覆盖配置与密钥。
 - 命令退出码非零时，即使已有 JSON 输出，也视为失败。
 
-## 邮件详情与会话字段
+## 邮件详情与正文读取策略
 
-`email read MESSAGE_ID` 的 `data` 除基础邮件字段外，还会稳定返回以下详情字段：
+> [!IMPORTANT]
+> **正文输出行为变更说明**：
+> 旧版本 `email read` 默认会同时返回 `body`（Markdown）、`body_html`（完整原始 HTML）以及 `unique_body_html`（本轮增量 HTML）三套正文，这往往会导致数千至上万字符的沉重 HTML 注入上下文、严重消耗 Token。
+> **当前版本已全面优化为 Markdown-First 机制**：
+> 1. **默认轻量化**：默认**仅返回**清洗后的易读 Markdown 正文 `body`，默认**不再返回** `body_html` 与 `unique_body_html`。
+> 2. **按需获取 HTML**：若业务或工作流确实需要原始 HTML 或增量 HTML，**必须显式传入 `--include-html`**（或在 `--fields` 中指定包含 `body_html`/`unique_body_html`）。
+> 3. **防爆保护**：支持 `--max-body-length <N>`（字符上限），配合字段 `body_length`（真实总字数）和 `body_truncated`（是否发生截断）实现安全消费。
 
-- `body`：按 `--body-format` 输出的正文；默认是清洗后的 Markdown，`--body-format html` 时是 HTML。
-- `body_length`：正文实际字符长度。
+`email read MESSAGE_ID` 返回的详情字段说明：
+
+- `body`：默认是清洗后的易读 Markdown；若指定 `--body-format html` 则按 HTML 格式返回。
+- `body_format`：当前正文字段格式（`markdown` 或 `html`）。
+- `body_length`：正文实际字符总长度。
 - `body_truncated`：布尔值，是否被 `--max-body-length` 截断。
-- `body_html`：完整原始 HTML 正文（默认省略以节省 Token，需传入 `--include-html` 或在 `--fields` 中指定）。
-- `unique_body_html`：EWS 返回的本轮新增 HTML 正文（需传入 `--include-html` 或在 `--fields` 中指定）。
+- `body_html`：完整原始 HTML 正文（默认省略以节省 Token；必须显式指定 `--include-html` 或在 `--fields` 包含时才返回）。
+- `unique_body_html`：EWS 识别的本轮新增 HTML 正文（默认省略以节省 Token；必须显式指定 `--include-html` 或在 `--fields` 包含时才返回）。
 - `conversation_id`：Exchange 会话 ID；不可用时为 `null`。
 - `internet_message_id`：邮件的 RFC Message-ID（通常带尖括号）；不可用时为 `null`。
+- `attachments`：附件列表（包含 `name`、`size`、`content_type` 等元数据）。
 
-`id` 是 EWS ItemId，不能替代 `internet_message_id`。`email list`、`email search` 与 `email watch` 仍只返回摘要，不承诺携带这些详情/会话字段。需要判断回复或转发的本轮变化时，使用 `email read --include-html` 获取 `unique_body_html`；其为 `null` 时再由调用方基于 `body_html` 做正文分界兜底。
+`id` 是 EWS ItemId，不能替代 `internet_message_id`。`email list`、`email search` 与 `email watch` 仍只返回摘要，不携带这些详情/会话字段。需要判断回复或转发的本轮变化时，使用 `email read MESSAGE_ID --include-html` 获取 `unique_body_html`；其为 `null` 时再由调用方基于 `body_html` 做正文分界兜底。
 
 ## 命令地图
 
@@ -176,11 +186,17 @@ exchange-cli config show
 ```bash
 exchange-cli email list --folder inbox --unread --limit 20
 exchange-cli email list --folder inbox --with-preview --limit 10
+# 默认轻量化读取（仅返回 Markdown body，默认不返回 HTML 字段以节省 Token）：
 exchange-cli email read MESSAGE_ID
+# 防止超长邮件撑爆 Token（截断至 1000 字符，返回 body_truncated: true/false）：
 exchange-cli email read MESSAGE_ID --max-body-length 1000
+# 显式索取原始完整 HTML 和本轮增量 HTML（body_html 与 unique_body_html）：
 exchange-cli email read MESSAGE_ID --include-html
+# 显式投影所需字段：
 exchange-cli email read MESSAGE_ID --fields id,subject,body
+# 需要原生 HTML 作为主正文格式：
 exchange-cli email read MESSAGE_ID --body-format html
+# 下载附件到本地目录：
 exchange-cli email read MESSAGE_ID --save-attachments ./downloads
 exchange-cli email mark-read MESSAGE_ID
 exchange-cli email mark-unread MESSAGE_ID
