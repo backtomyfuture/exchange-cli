@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 from exchangelib import BASIC, DELEGATE, NTLM, Account, Configuration, Credentials
@@ -51,7 +53,20 @@ def _configure_http_adapter(no_verify_ssl: bool) -> None:
 def create_account(credentials_dict: dict[str, Any]) -> Account:
     """Create an Account with bounded, fail-fast on-premises settings."""
 
-    _configure_http_adapter(bool(credentials_dict.get("no_verify_ssl", False)))
+    no_verify_ssl = bool(credentials_dict.get("no_verify_ssl", False))
+    _configure_http_adapter(no_verify_ssl)
+
+    ca_bundle = credentials_dict.get("ca_bundle")
+    if ca_bundle:
+        resolved_ca = Path(ca_bundle).expanduser()
+        if not resolved_ca.is_file():
+            raise CliError(
+                f"Configured CA bundle file not found: {ca_bundle}",
+                code="CONFIG_INVALID",
+                exit_code=2,
+            )
+        os.environ["REQUESTS_CA_BUNDLE"] = str(resolved_ca.resolve())
+
     BaseProtocol.TIMEOUT = int(credentials_dict["timeout_seconds"])
     auth_type = _resolve_auth_type(credentials_dict.get("auth_type"))
     try:

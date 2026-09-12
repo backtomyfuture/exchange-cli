@@ -1,4 +1,4 @@
-"""Top-level diagnostic command for exchange-cli."""
+from pathlib import Path
 
 import click
 
@@ -17,6 +17,10 @@ def _remediation(code: str) -> str:
         "CONNECTION_ERROR": "Verify network reachability and the Exchange server, then retry.",
         "TIMEOUT_ERROR": "Verify network reachability and the Exchange server, then retry.",
         "SERVER_BUSY": "Retry after the Exchange server is available.",
+        "INSECURE_TLS": (
+            "Enable certificate verification. Use server domain name or configure ca_bundle / REQUESTS_CA_BUNDLE."
+        ),
+        "CA_BUNDLE_NOT_FOUND": "Verify that the configured ca_bundle path exists and is readable.",
     }
     return remediation_by_code.get(code, "Review the reported configuration and retry.")
 
@@ -84,14 +88,43 @@ def doctor(ctx, offline):
 
     checks = [{"id": "effective_config", "status": "pass"}]
     if credentials["no_verify_ssl"]:
+        server = str(credentials.get("server", ""))
+        parts = server.split(".")
+        is_ip = len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+        ip_hint = " Note: using an IP address often causes TLS certificate mismatch." if is_ip else ""
+        remediation = (
+            f"Enable certificate verification.{ip_hint} "
+            "Use the server domain name or configure ca_bundle / REQUESTS_CA_BUNDLE."
+        )
         checks.append(
             {
                 "id": "tls_verification",
-                "status": "warn",
+                "status": "fail",
                 "message": "TLS certificate verification is disabled.",
-                "remediation": "Enable certificate verification when possible.",
+                "code": "INSECURE_TLS",
+                "remediation": remediation,
             }
         )
+    elif credentials.get("ca_bundle"):
+        ca_path = Path(credentials["ca_bundle"]).expanduser()
+        if not ca_path.is_file():
+            checks.append(
+                {
+                    "id": "tls_verification",
+                    "status": "fail",
+                    "message": f"Configured CA bundle file not found: {credentials['ca_bundle']}",
+                    "code": "CA_BUNDLE_NOT_FOUND",
+                    "remediation": "Verify that the ca_bundle path exists and is readable.",
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "id": "tls_verification",
+                    "status": "pass",
+                    "message": f"TLS certificate verification enabled with CA bundle: {credentials['ca_bundle']}",
+                }
+            )
     else:
         checks.append({"id": "tls_verification", "status": "pass"})
 
@@ -103,6 +136,15 @@ def doctor(ctx, offline):
                 "message": "Skipped because --offline was requested.",
             }
         )
+        if _overall_status(checks) == "fail":
+            failed = next(c for c in checks if c["status"] == "fail")
+            formatter.diagnostic(
+                {"overall": "fail", "checks": checks},
+                ok=False,
+                error=failed.get("message", "Doctor checks failed."),
+                code=failed.get("code", "DIAGNOSTIC_FAILURE"),
+            )
+            raise SystemExit(1)
         formatter.diagnostic({"overall": _overall_status(checks), "checks": checks})
         return
 
@@ -115,4 +157,13 @@ def doctor(ctx, offline):
         _emit_failure(formatter, checks, error)
 
     checks.append({"id": "ews_root", "status": "pass"})
+    if _overall_status(checks) == "fail":
+        failed = next(c for c in checks if c["status"] == "fail")
+        formatter.diagnostic(
+            {"overall": "fail", "checks": checks},
+            ok=False,
+            error=failed.get("message", "Doctor checks failed."),
+            code=failed.get("code", "DIAGNOSTIC_FAILURE"),
+        )
+        raise SystemExit(1)
     formatter.diagnostic({"overall": _overall_status(checks), "checks": checks})

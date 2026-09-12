@@ -32,6 +32,7 @@ CONFIG_ENV_VARS = (
     "EXCHANGE_EMAIL_SUFFIX",
     "EXCHANGE_EMAIL",
     "EXCHANGE_TIMEOUT_SECONDS",
+    "EXCHANGE_CA_BUNDLE",
 )
 
 
@@ -246,6 +247,7 @@ class ConfigManager:
         password = raw_account.get("password")
         auth_type = self._normalize_text(raw_account.get("auth_type"), lower=True) or "ntlm"
         no_verify_ssl = raw_account.get("no_verify_ssl", False)
+        ca_bundle = raw_account.get("ca_bundle")
         missing = [
             field
             for field, value in (
@@ -266,6 +268,8 @@ class ConfigManager:
             raise CliError("Configured auth_type is invalid.", code="CONFIG_INVALID")
         if type(no_verify_ssl) is not bool:
             raise CliError("Configured no_verify_ssl must be a boolean.", code="CONFIG_INVALID")
+        if ca_bundle is not None and (not isinstance(ca_bundle, str) or not ca_bundle.strip()):
+            raise CliError("Configured ca_bundle must be a non-empty string path.", code="CONFIG_INVALID")
 
         normalized_account: dict[str, Any] = {
             "server": server,
@@ -274,6 +278,8 @@ class ConfigManager:
             "auth_type": auth_type,
             "no_verify_ssl": no_verify_ssl,
         }
+        if ca_bundle:
+            normalized_account["ca_bundle"] = ca_bundle.strip()
         if "timeout_seconds" in raw_account:
             normalized_account["timeout_seconds"] = self.parse_timeout(raw_account["timeout_seconds"])
         return {
@@ -333,6 +339,7 @@ class ConfigManager:
         password: str,
         auth_type: str = "ntlm",
         no_verify_ssl: bool = False,
+        ca_bundle: str | None = None,
     ) -> None:
         normalized_email = self._normalize_text(email)
         normalized_server = self._normalize_server(server)
@@ -360,18 +367,24 @@ class ConfigManager:
             raise CliError("Unsupported auth type.", code="INVALID_AUTH_TYPE", exit_code=2)
         if type(no_verify_ssl) is not bool:
             raise CliError("no_verify_ssl must be a boolean.", code="CONFIG_INVALID", exit_code=2)
+        if ca_bundle is not None and (not isinstance(ca_bundle, str) or not ca_bundle.strip()):
+            raise CliError("ca_bundle must be a non-empty string path.", code="CONFIG_INVALID", exit_code=2)
+
+        account_entry: dict[str, Any] = {
+            "server": normalized_server,
+            "username": normalized_username,
+            "password": self._encrypt(password),
+            "auth_type": normalized_auth_type,
+            "no_verify_ssl": no_verify_ssl,
+        }
+        if ca_bundle:
+            account_entry["ca_bundle"] = ca_bundle.strip()
 
         config = {
             "version": CONFIG_VERSION,
             "default_account": normalized_email,
             "accounts": {
-                normalized_email: {
-                    "server": normalized_server,
-                    "username": normalized_username,
-                    "password": self._encrypt(password),
-                    "auth_type": normalized_auth_type,
-                    "no_verify_ssl": no_verify_ssl,
-                }
+                normalized_email: account_entry
             },
         }
         self._save_config(config)
@@ -454,6 +467,14 @@ class ConfigManager:
         else:
             timeout_seconds = DEFAULT_TIMEOUT_SECONDS
 
+        resolved_ca_bundle = None
+        if "EXCHANGE_CA_BUNDLE" in os.environ:
+            resolved_ca_bundle = self._normalize_text(os.environ["EXCHANGE_CA_BUNDLE"])
+        elif stored_account and stored_account.get("ca_bundle"):
+            resolved_ca_bundle = self._normalize_text(stored_account["ca_bundle"])
+        elif "REQUESTS_CA_BUNDLE" in os.environ:
+            resolved_ca_bundle = self._normalize_text(os.environ["REQUESTS_CA_BUNDLE"])
+
         resolved_server = self._normalize_server(resolved_server)
         resolved_username = self._normalize_text(resolved_username)
         resolved_email = self._normalize_text(resolved_email)
@@ -474,7 +495,7 @@ class ConfigManager:
                 details={"missing_fields": missing},
             )
 
-        return {
+        result: dict[str, Any] = {
             "email": resolved_email,
             "server": resolved_server,
             "username": resolved_username,
@@ -483,6 +504,9 @@ class ConfigManager:
             "no_verify_ssl": no_verify_ssl,
             "timeout_seconds": timeout_seconds,
         }
+        if resolved_ca_bundle:
+            result["ca_bundle"] = resolved_ca_bundle
+        return result
 
     def get_display_config(self) -> dict[str, Any] | None:
         config = self.load_config()

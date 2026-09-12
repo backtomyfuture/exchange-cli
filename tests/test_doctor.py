@@ -56,21 +56,67 @@ class TestDoctor:
         )
 
     @patch("exchange_cli.commands.doctor.probe_connection", return_value=True)
-    def test_warns_when_tls_verification_is_disabled(self, mock_probe, runner, tmp_path):
+    def test_fails_when_tls_verification_is_disabled(self, mock_probe, runner, tmp_path):
         config_dir = _config_dir(tmp_path, no_verify_ssl=True)
+
+        result = runner.invoke(cli, ["--config", str(config_dir), "doctor"])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["ok"] is False
+        assert data["code"] == "INSECURE_TLS"
+        assert data["data"]["overall"] == "fail"
+        assert data["data"]["checks"][1]["id"] == "tls_verification"
+        assert data["data"]["checks"][1]["status"] == "fail"
+        assert data["data"]["checks"][1]["code"] == "INSECURE_TLS"
+        mock_probe.assert_called_once()
+
+    @patch("exchange_cli.commands.doctor.probe_connection", return_value=True)
+    def test_fails_when_ca_bundle_does_not_exist(self, mock_probe, runner, tmp_path):
+        config_dir = tmp_path / ".exchange-cli"
+        ConfigManager(config_dir=config_dir).save_account(
+            "test@example.com",
+            "mail.example.com",
+            "DOMAIN\\test",
+            "pass",
+            "ntlm",
+            no_verify_ssl=False,
+            ca_bundle=str(tmp_path / "nonexistent-ca.pem"),
+        )
+
+        result = runner.invoke(cli, ["--config", str(config_dir), "doctor"])
+
+        assert result.exit_code == 1
+        data = json.loads(result.stdout)
+        assert data["ok"] is False
+        assert data["code"] == "CA_BUNDLE_NOT_FOUND"
+        assert data["data"]["overall"] == "fail"
+        assert data["data"]["checks"][1]["id"] == "tls_verification"
+        assert data["data"]["checks"][1]["status"] == "fail"
+
+    @patch("exchange_cli.commands.doctor.probe_connection", return_value=True)
+    def test_passes_when_ca_bundle_exists(self, mock_probe, runner, tmp_path):
+        ca_file = tmp_path / "corp-ca.pem"
+        ca_file.write_text("dummy cert", encoding="utf-8")
+        config_dir = tmp_path / ".exchange-cli"
+        ConfigManager(config_dir=config_dir).save_account(
+            "test@example.com",
+            "mail.example.com",
+            "DOMAIN\\test",
+            "pass",
+            "ntlm",
+            no_verify_ssl=False,
+            ca_bundle=str(ca_file),
+        )
 
         result = runner.invoke(cli, ["--config", str(config_dir), "doctor"])
 
         assert result.exit_code == 0
         data = json.loads(result.stdout)
-        assert data["data"]["overall"] == "warn"
-        assert data["data"]["checks"][1] == {
-            "id": "tls_verification",
-            "status": "warn",
-            "message": "TLS certificate verification is disabled.",
-            "remediation": "Enable certificate verification when possible.",
-        }
-        mock_probe.assert_called_once()
+        assert data["ok"] is True
+        assert data["data"]["overall"] == "pass"
+        assert data["data"]["checks"][1]["id"] == "tls_verification"
+        assert data["data"]["checks"][1]["status"] == "pass"
 
     @patch("exchange_cli.commands.doctor.probe_connection")
     def test_offline_skips_ews_probe(self, mock_probe, runner, tmp_path):

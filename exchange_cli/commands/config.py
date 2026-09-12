@@ -41,8 +41,9 @@ def config(ctx):
 
 
 @config.command("init")
+@click.option("--ca-bundle", type=click.Path(dir_okay=False), default=None, help="Path to enterprise CA bundle.")
 @click.pass_context
-def config_init(ctx):
+def config_init(ctx, ca_bundle):
     """Interactive setup for Exchange server credentials."""
     config_path = ctx.obj.get("config_path")
     config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
@@ -92,29 +93,47 @@ def config_init(ctx):
         email = click.prompt("Email address", type=str)
 
     server = _normalize_text(server) or server
+    parts = server.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        click.echo(
+            "Notice: Using an IP address instead of a domain name often causes TLS certificate verification to fail.",
+            err=True,
+        )
+
     username = _normalize_text(username) or username
     auth_type = _normalize_text(auth_type, lower=True) or auth_type
     email = _normalize_text(email) or email
 
+    ca_bundle_resolved = ca_bundle or os.environ.get("EXCHANGE_CA_BUNDLE") or os.environ.get("REQUESTS_CA_BUNDLE")
+    if ca_bundle_resolved:
+        ca_bundle_resolved = ca_bundle_resolved.strip() or None
+
     no_verify_default = os.environ.get("EXCHANGE_NO_VERIFY_SSL", "").strip().lower() in TRUTHY_VALUES
     no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default)
+    if no_verify_ssl:
+        click.echo(
+            "Warning: Disabling SSL certificate verification is insecure and will cause 'exchange-cli doctor' to fail.",
+            err=True,
+        )
 
     click.echo("Testing connection...", err=True)
     try:
         timeout_seconds = config_manager.parse_timeout(
             os.environ.get("EXCHANGE_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
         )
-        if not probe_connection(
-            {
-                "email": email,
-                "server": server,
-                "username": username,
-                "password": password,
-                "auth_type": auth_type,
-                "no_verify_ssl": no_verify_ssl,
-                "timeout_seconds": timeout_seconds,
-            }
-        ):
+        probe_payload = {
+            "email": email,
+            "server": server,
+            "username": username,
+            "password": password,
+            "auth_type": auth_type,
+            "no_verify_ssl": no_verify_ssl,
+            "timeout_seconds": timeout_seconds,
+        }
+        if ca_bundle_resolved:
+            probe_payload["ca_bundle"] = ca_bundle_resolved
+
+        if not probe_connection(probe_payload):
             raise CliError("Connection failed.", code="CONNECTION_ERROR", retryable=True)
         click.echo("Connected successfully.", err=True)
     except Exception as exc:
@@ -130,7 +149,15 @@ def config_init(ctx):
             )
             return
 
-    config_manager.save_account(email, server, username, password, auth_type, no_verify_ssl=no_verify_ssl)
+    config_manager.save_account(
+        email,
+        server,
+        username,
+        password,
+        auth_type,
+        no_verify_ssl=no_verify_ssl,
+        ca_bundle=ca_bundle_resolved,
+    )
     click.echo(f"Configuration saved to {config_manager.config_path}", err=True)
 
     formatter.success({"message": "Configuration saved", "account": email, "changed": True})

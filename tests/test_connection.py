@@ -1,3 +1,4 @@
+import os
 from unittest.mock import patch
 
 import pytest
@@ -160,5 +161,45 @@ class TestConnectionManager:
     ):
         with pytest.raises(CliError) as caught:
             cm.get_account()
+
+        assert caught.value.code == "CONFIG_INVALID"
+
+    @patch("exchange_cli.core.connection.Credentials")
+    @patch("exchange_cli.core.connection.Configuration")
+    @patch("exchange_cli.core.connection.Account")
+    def test_get_account_sets_requests_ca_bundle(
+        self, mock_account, mock_config, mock_credentials, tmp_path
+    ):
+        from exchange_cli.core.config import ConfigManager
+
+        ca_file = tmp_path / "enterprise.pem"
+        ca_file.write_text("cert", encoding="utf-8")
+        cfg = ConfigManager(config_dir=tmp_path / ".exchange-cli")
+        cfg.save_account(
+            "test@example.com", "mail.example.com", "user", "pass", "ntlm", ca_bundle=str(ca_file)
+        )
+        connection = ConnectionManager(cfg)
+        try:
+            connection.get_account()
+            assert os.environ.get("REQUESTS_CA_BUNDLE") == str(ca_file.resolve())
+        finally:
+            os.environ.pop("REQUESTS_CA_BUNDLE", None)
+
+    def test_get_account_raises_when_ca_bundle_missing(self, tmp_path):
+        from exchange_cli.core.config import ConfigManager
+
+        cfg = ConfigManager(config_dir=tmp_path / ".exchange-cli")
+        cfg.save_account(
+            "test@example.com",
+            "mail.example.com",
+            "user",
+            "pass",
+            "ntlm",
+            ca_bundle=str(tmp_path / "missing.pem"),
+        )
+        connection = ConnectionManager(cfg)
+
+        with pytest.raises(CliError) as caught:
+            connection.get_account()
 
         assert caught.value.code == "CONFIG_INVALID"

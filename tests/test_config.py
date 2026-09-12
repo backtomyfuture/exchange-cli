@@ -350,3 +350,41 @@ class TestConfigManager:
             cm.save_account("a@x.com", "https://mail.example.com/EWS", "u", "secret", "ntlm")
 
         assert caught.value.code == "CONFIG_INVALID"
+
+    def test_save_and_load_ca_bundle(self, cm):
+        cm.save_account(
+            "a@x.com",
+            "mail.example.com",
+            "u",
+            "secret",
+            "ntlm",
+            ca_bundle="/etc/ssl/corp.pem",
+        )
+        loaded = cm.load_config()
+        assert loaded["accounts"]["a@x.com"]["ca_bundle"] == "/etc/ssl/corp.pem"
+        creds = cm.get_account_credentials("a@x.com")
+        assert creds["ca_bundle"] == "/etc/ssl/corp.pem"
+
+    def test_env_exchange_ca_bundle_overrides_config(self, cm, monkeypatch):
+        cm.save_account(
+            "a@x.com",
+            "mail.example.com",
+            "u",
+            "secret",
+            "ntlm",
+            ca_bundle="/etc/ssl/old.pem",
+        )
+        monkeypatch.setenv("EXCHANGE_CA_BUNDLE", "/etc/ssl/new.pem")
+        creds = cm.get_account_credentials("a@x.com")
+        assert creds["ca_bundle"] == "/etc/ssl/new.pem"
+
+    def test_env_requests_ca_bundle_fallback(self, cm, monkeypatch):
+        cm.save_account("a@x.com", "mail.example.com", "u", "secret", "ntlm")
+        monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/requests.pem")
+        creds = cm.get_account_credentials("a@x.com")
+        assert creds["ca_bundle"] == "/etc/ssl/requests.pem"
+
+    def test_invalid_ca_bundle_raises(self, cm):
+        with pytest.raises(CliError) as caught:
+            cm.save_account("a@x.com", "s.com", "u", "secret", "ntlm", ca_bundle="   ")
+        assert caught.value.code == "CONFIG_INVALID"

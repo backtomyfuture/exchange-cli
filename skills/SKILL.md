@@ -92,9 +92,10 @@ exchange-cli config show
 - `EXCHANGE_EMAIL`、`EXCHANGE_DOMAIN`、`EXCHANGE_EMAIL_SUFFIX`
 - `EXCHANGE_NO_VERIFY_SSL`
 - `EXCHANGE_TIMEOUT_SECONDS`（默认 `30`，范围 `1..300`）
+- `EXCHANGE_CA_BUNDLE`（或 `REQUESTS_CA_BUNDLE`，企业私有 CA 证书路径）
 - `EXCHANGE_CLI_CONFIG`（配置目录）
 
-`EXCHANGE_SERVER` 应是主机名或 IP，不要带 URL scheme 或路径。`EXCHANGE_NO_VERIFY_SSL=1` 会关闭 TLS 证书校验，只能在用户确认风险的受控内网临时使用。
+`EXCHANGE_SERVER` 应是主机域名（如 `mail.example.com`），不要使用裸 IP，避免引发证书域名不匹配（IP mismatch）。`EXCHANGE_NO_VERIFY_SSL=1` 会彻底关闭 TLS 证书校验，`exchange-cli doctor` 将判定为失败；生产环境请配置企业 CA 或使用正确域名。
 
 ## 输出与错误处理
 

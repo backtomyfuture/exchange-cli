@@ -142,12 +142,15 @@ exchange-cli contact search "John"
 - `EXCHANGE_EMAIL_SUFFIX`
 - `EXCHANGE_EMAIL`
 - `EXCHANGE_TIMEOUT_SECONDS`（默认 `30`，范围 `1..300`）
+- `EXCHANGE_CA_BUNDLE`（或标准的 `REQUESTS_CA_BUNDLE`，企业私有 CA 根证书/证书链路径）
 
 环境变量按字段覆盖配置文件，而不是整体替换配置。`--account` 仅用于断言当前账号，必须与已配置的单账号匹配（忽略大小写），不能切换账号。
 
-`exchange-cli doctor` 会检查有效配置、TLS 证书校验设置，并通过刷新 EWS 根目录验证认证和最小只读访问；它不会读取邮件或写入 Exchange。加 `--offline` 时仅跳过这项 EWS 远端探针。检查失败会返回非零退出码，同时在 JSON 的 `data.checks` 中保留各检查项和修复建议。
+`EXCHANGE_SERVER` 应是主机域名（如 `mail.example.com`），不要配置成裸 IP。若配置为 IP 地址，会因为服务端证书未将该 IP 写入保护列表（No IP SAN）而引发 TLS 主机名不匹配错误（IP mismatch）。
 
-`EXCHANGE_NO_VERIFY_SSL=1` 会关闭 TLS 证书校验，只应在已确认风险的受控内网中临时使用，否则可能遭受中间人攻击。企业环境应优先配置企业 CA，而不是把关闭校验当成默认模板。Fernet 密钥与密文都保存在同一台机器，只能降低配置文件被单独复制或误读的风险，不能防御同一系统账号已经失陷的情况。
+`exchange-cli doctor` 会检查有效配置、TLS 证书校验设置与 CA 路径，并通过刷新 EWS 根目录验证认证和最小只读访问；它不会读取邮件或写入 Exchange。加 `--offline` 时仅跳过这项 EWS 远端探针。如果关闭了 TLS 校验（`no_verify_ssl=true`）或 CA 路径无效，`doctor` 会判定为 `fail` 并返回非零退出码，阻止带安全隐患的配置在企业内扩散。
+
+企业私有 CA 证书环境应配置企业 CA 路径（通过 `EXCHANGE_CA_BUNDLE`、`REQUESTS_CA_BUNDLE` 或配置文件的 `ca_bundle` 字段），而不是把关闭校验当成默认模板。`EXCHANGE_NO_VERIFY_SSL=1` 会彻底关闭 TLS 证书校验，仅限已确认风险的隔离沙盒排障使用。Fernet 密钥与密文都保存在同一台机器，只能降低配置文件被单独复制或误读的风险，不能防御同一系统账号已经失陷的情况。
 
 `email list` 和 `email watch` 都在当前 CLI 进程中直接连接本地 Exchange，不启动后台进程。`email watch` 的新邮件事件只包含 item id；需要正文时再调用 `email read`。可用 `--duration` 和 `--max-events` 限制运行时间。认证失败会停止监听，不会无限重连。
 
