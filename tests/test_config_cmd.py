@@ -20,10 +20,13 @@ class TestConfigInit:
             result = runner.invoke(
                 cli,
                 ["--config", config_path, "config", "init"],
-                input="mail.example.com\nDOMAIN\\test\nsecret123\nntlm\ntest@example.com\nn\n",
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
             )
         assert result.exit_code == 0
         assert "saved" in result.output.lower() or "ok" in result.output.lower()
+        saved = json.loads((tmp_path / ".exchange-cli" / "config.json").read_text(encoding="utf-8"))
+        assert saved["accounts"]["test@example.com"]["no_verify_ssl"] is False
+        assert saved["accounts"]["test@example.com"]["auth_type"] == "ntlm"
 
     def test_init_overwrites_instead_of_adding(self, runner, tmp_path):
         from exchange_cli.core.config import ConfigManager
@@ -35,7 +38,7 @@ class TestConfigInit:
             result = runner.invoke(
                 cli,
                 ["--config", str(config_dir), "config", "init"],
-                input="y\nmail.example.com\nDOMAIN\\test\nsecret123\nntlm\ntest@example.com\nn\n",
+                input="y\nmail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
             )
 
         assert result.exit_code == 0
@@ -50,7 +53,7 @@ class TestConfigInit:
             result = runner.invoke(
                 cli,
                 ["--config", str(config_dir), "config", "init"],
-                input="mail.example.com\nDOMAIN\\test\nsecret123\nntlm\ntest@example.com\nn\nn\n",
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\nn\n",
             )
 
         assert result.exit_code == 0
@@ -65,7 +68,7 @@ class TestConfigInit:
             result = runner.invoke(
                 cli,
                 ["--config", str(config_dir), "config", "init"],
-                input="y\nmail.example.com\nDOMAIN\\test\nsecret123\nntlm\ntest@example.com\nn\n",
+                input="y\nmail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
             )
 
         assert result.exit_code == 0
@@ -75,13 +78,10 @@ class TestConfigInit:
         monkeypatch.setenv("USER", "testuser")
         config_dir = tmp_path / ".exchange-cli"
         with patch("exchange_cli.commands.config.probe_connection", return_value=True):
-            # Press enter for server (10.72.8.110), enter for username (hnanet\testuser),
-            # enter password, enter for auth (ntlm), enter for email (testuser@tianjin-air.com),
-            # enter n for disable ssl
             result = runner.invoke(
                 cli,
                 ["--config", str(config_dir), "config", "init", "--preset", "company"],
-                input="\n\nsecret123\n\n\nn\n",
+                input="\n\nsecret123\n\n",
             )
 
         assert result.exit_code == 0
@@ -91,6 +91,70 @@ class TestConfigInit:
         assert account["server"] == "mail.hnair.net"
         assert account["username"] == "hnanet\\testuser"
         assert account["auth_type"] == "ntlm"
+        assert account["no_verify_ssl"] is False
+
+    def test_init_with_insecure_flag(self, runner, tmp_path):
+        config_path = str(tmp_path / ".exchange-cli")
+        with patch("exchange_cli.commands.config.probe_connection", return_value=True):
+            result = runner.invoke(
+                cli,
+                ["--config", config_path, "config", "init", "--insecure"],
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
+            )
+        assert result.exit_code == 0
+        assert "warning: disabling ssl" in result.output.lower()
+        saved = json.loads((tmp_path / ".exchange-cli" / "config.json").read_text(encoding="utf-8"))
+        assert saved["accounts"]["test@example.com"]["no_verify_ssl"] is True
+
+    def test_init_with_no_verify_ssl_alias(self, runner, tmp_path):
+        config_path = str(tmp_path / ".exchange-cli")
+        with patch("exchange_cli.commands.config.probe_connection", return_value=True):
+            result = runner.invoke(
+                cli,
+                ["--config", config_path, "config", "init", "--no-verify-ssl"],
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
+            )
+        assert result.exit_code == 0
+        saved = json.loads((tmp_path / ".exchange-cli" / "config.json").read_text(encoding="utf-8"))
+        assert saved["accounts"]["test@example.com"]["no_verify_ssl"] is True
+
+    def test_init_with_env_no_verify_ssl(self, runner, tmp_path, monkeypatch):
+        monkeypatch.setenv("EXCHANGE_NO_VERIFY_SSL", "1")
+        config_path = str(tmp_path / ".exchange-cli")
+        with patch("exchange_cli.commands.config.probe_connection", return_value=True):
+            result = runner.invoke(
+                cli,
+                ["--config", config_path, "config", "init"],
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
+            )
+        assert result.exit_code == 0
+        saved = json.loads((tmp_path / ".exchange-cli" / "config.json").read_text(encoding="utf-8"))
+        assert saved["accounts"]["test@example.com"]["no_verify_ssl"] is True
+
+    def test_init_with_auth_type_flag(self, runner, tmp_path):
+        config_path = str(tmp_path / ".exchange-cli")
+        with patch("exchange_cli.commands.config.probe_connection", return_value=True):
+            result = runner.invoke(
+                cli,
+                ["--config", config_path, "config", "init", "--auth-type", "basic"],
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
+            )
+        assert result.exit_code == 0
+        saved = json.loads((tmp_path / ".exchange-cli" / "config.json").read_text(encoding="utf-8"))
+        assert saved["accounts"]["test@example.com"]["auth_type"] == "basic"
+
+    def test_init_with_env_auth_type(self, runner, tmp_path, monkeypatch):
+        monkeypatch.setenv("EXCHANGE_AUTH_TYPE", "basic")
+        config_path = str(tmp_path / ".exchange-cli")
+        with patch("exchange_cli.commands.config.probe_connection", return_value=True):
+            result = runner.invoke(
+                cli,
+                ["--config", config_path, "config", "init"],
+                input="mail.example.com\nDOMAIN\\test\nsecret123\ntest@example.com\n",
+            )
+        assert result.exit_code == 0
+        saved = json.loads((tmp_path / ".exchange-cli" / "config.json").read_text(encoding="utf-8"))
+        assert saved["accounts"]["test@example.com"]["auth_type"] == "basic"
 
     def test_init_aborted_keeps_stdout_valid_json(self, runner, tmp_path):
         config_dir = tmp_path / ".exchange-cli"

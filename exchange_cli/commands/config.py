@@ -64,8 +64,21 @@ def config(ctx):
     default=None,
     help="Configuration preset (e.g. company, tianjin-air). Pre-fills enterprise server and domain settings.",
 )
+@click.option(
+    "--insecure",
+    "--no-verify-ssl",
+    is_flag=True,
+    default=False,
+    help="Disable SSL certificate verification (insecure, will cause 'exchange-cli doctor' to fail).",
+)
+@click.option(
+    "--auth-type",
+    type=click.Choice(["ntlm", "basic"], case_sensitive=False),
+    default=None,
+    help="Authentication type: ntlm (default) or basic.",
+)
 @click.pass_context
-def config_init(ctx, ca_bundle, preset):
+def config_init(ctx, ca_bundle, preset, insecure, auth_type):
     """Interactive setup for Exchange server credentials."""
     config_path = ctx.obj.get("config_path")
     config_manager = ConfigManager(config_dir=config_path) if config_path else ConfigManager()
@@ -104,12 +117,14 @@ def config_init(ctx, ca_bundle, preset):
         username = click.prompt("Username (e.g. DOMAIN\\user or user@domain.com)", type=str, err=True)
 
     password = click.prompt("Password", type=str, hide_input=True, err=True)
-    auth_default = (
-        os.environ.get("EXCHANGE_AUTH_TYPE") or (active_preset["auth_type"] if active_preset else "ntlm")
-    ).lower()
-    if auth_default not in {"ntlm", "basic"}:
-        auth_default = "ntlm"
-    auth_type = click.prompt("Auth type", type=click.Choice(["ntlm", "basic"]), default=auth_default, err=True)
+    if not auth_type:
+        env_auth = os.environ.get("EXCHANGE_AUTH_TYPE")
+        preset_auth = active_preset["auth_type"] if active_preset else None
+        auth_type = (env_auth or preset_auth or "ntlm").lower()
+    else:
+        auth_type = auth_type.lower()
+    if auth_type not in {"ntlm", "basic"}:
+        auth_type = "ntlm"
 
     email_default = os.environ.get("EXCHANGE_EMAIL")
     if not email_default:
@@ -136,8 +151,8 @@ def config_init(ctx, ca_bundle, preset):
     if ca_bundle_resolved:
         ca_bundle_resolved = ca_bundle_resolved.strip() or None
 
-    no_verify_default = os.environ.get("EXCHANGE_NO_VERIFY_SSL", "").strip().lower() in TRUTHY_VALUES
-    no_verify_ssl = click.confirm("Disable SSL certificate verification", default=no_verify_default, err=True)
+    env_no_verify = os.environ.get("EXCHANGE_NO_VERIFY_SSL", "").strip().lower() in TRUTHY_VALUES
+    no_verify_ssl = bool(insecure or env_no_verify)
     if no_verify_ssl:
         click.echo(
             "Warning: Disabling SSL certificate verification is insecure and will cause 'exchange-cli doctor' to fail.",

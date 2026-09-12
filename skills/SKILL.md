@@ -16,6 +16,33 @@ metadata:
 
 `exchange-cli` 在当前 CLI 进程中直连一个本地 Exchange Server 账号。它不使用数据库、Docker、Web 服务或后台 daemon，默认输出结构化 JSON。
 
+## 全新机器安装
+
+前置：Node ≥ 14（建议 18+）与 npm。macOS/Linux/Windows 走 npm 平台二进制分发。
+
+```bash
+npm install -g @backtomyfuture/exchange-cli
+export PATH="/opt/homebrew/bin:$PATH"   # 非交互 Shell 常缺此路径
+exchange-cli --version                  # 期望：exchange-cli, version <x.y.z>
+```
+
+稳定版以 npm 上的 `dist-tags.latest` 为准（`npm view @backtomyfuture/exchange-cli version`）。也可用 Homebrew formula 或 Python 源码安装（详见项目 README）。
+
+安装机制与已知坑：
+
+- 主包含 `postinstall: node ./install.js`，职责是解析平台二进制包（darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64 / win32-x64 / win32-ia32）、设置可执行位，并在 macOS arm64 上补齐 `Python.framework` 运行时布局（该修复为幂等 + 尽力而为，会在 `_internal/.runtime_layout_ok` 或 `~/Library/Caches/exchange-cli/` 留标记）。
+- **npm 11+ 默认拦截 postinstall**（`allowScripts` 白名单），安装输出会出现 `npm warn install-scripts … not yet covered by allowScripts`。**经验结论：通常不影响可用性**——tarball 自带可执行位、framework 布局完整，装完即可用。仅当 `--version` 报 `BINARY_NOT_FOUND` / `BINARY_SPAWN_FAILED` / 权限不足时，放行脚本重装：
+
+```bash
+npm install -g --allow-scripts=@backtomyfuture/exchange-cli @backtomyfuture/exchange-cli
+```
+
+- 平台二进制落在主包**嵌套**目录 `…/node_modules/@backtomyfuture/exchange-cli/node_modules/@backtomyfuture/exchange-cli-<平台>/`。顶层 `node_modules/@backtomyfuture/` 下只有 `exchange-cli` 一个目录属正常，不代表缺二进制。可直接跑 `…/bin/exchange-cli --version` 验证原生二进制本身。
+- 安装约占 60 MB；首次启动在 macOS 上可能需十几秒，之后约 0.25s。
+- **重装陷阱**：本机 npm 有 safe-delete 批量护栏（阈值约 50 文件），`npm uninstall -g` 可能失败并在 `node_modules/@backtomyfuture/` 留**空目录**残留。清理残留用 `trash` 或移入备份目录，不要 `rm -rf`；残留空目录不影响重装。
+- 验证清单（离线即可跑）：`exchange-cli --version`、`exchange-cli --help`、`exchange-cli schema`（应返回 `ok: true`、`schema_version`）、`exchange-cli doctor --offline`（未配置时期望 `CONFIG_NOT_FOUND`）。
+- 装完**必须**跑 `config init` 才能用；安装成功 ≠ 可用。
+
 ## 使用前先判断
 
 1. 确认目标是本地 Exchange Server，而不是 Exchange Online / Microsoft 365。
@@ -87,7 +114,30 @@ exchange-cli config init
 exchange-cli config init --preset company
 # 支持通过 --ca-bundle 指定私有企业根证书：
 exchange-cli config init --ca-bundle /path/to/corporate-ca.pem
+# 仅限测试/沙盒排障时跳过 SSL 校验（不推荐，doctor 会报 fail）：
+exchange-cli config init --insecure
+# 指定认证类型（默认 ntlm）：
+exchange-cli config init --auth-type basic
 ```
+
+### config init 交互序列（`--preset company` / `tianjin-air`）
+
+`config init` **只有交互式入口**，没有任何非交互传密码的选项——密码必须由用户在自己终端里输入，Agent 不得代输、不得回显。预设取值：`company` 与 `tianjin-air` 完全等价，均为 `server=mail.hnair.net`、`domain=hnanet`、`email_suffix=tianjin-air.com`、`auth_type=ntlm`。
+
+依次提示 4 项（回车采纳默认值）：
+
+| # | 提示 | 预设下的默认值 | 注意 |
+|---|---|---|---|
+| 1 | Exchange Server | `mail.hnair.net` | 勿用裸 IP，否则证书域名不匹配 |
+| 2 | Username | `hnanet\<本机 $USER>` | ⚠️ **默认值由本机登录名推导，往往不是目标账号**，须手输真实账号（`DOMAIN\user` 或 `user@domain.com` 均可） |
+| 3 | Password | 无 | 隐藏输入 |
+| 4 | Email address | 由 username 去掉 `DOMAIN\` 与 `@` 后段 + `@tianjin-air.com` 推导 | 若第 2 步输对账号，此项通常自动正确 |
+
+> **配置项默认与简化说明**：
+> - **认证类型（Auth type）**：默认自动使用 `ntlm`（企业本地部署 Exchange 的标准认证），无需手工交互选择。若需使用 `basic` 认证，可通过 `--auth-type basic` 选项或 `EXCHANGE_AUTH_TYPE=basic` 环境变量指定。
+> - **SSL 证书验证**：默认自动启用严格的 SSL/TLS 证书验证，无需手工交互选择（避免误选跳过导致 `doctor` 失败）。仅在测试环境或明确需要时，可通过 `--insecure`（别名 `--no-verify-ssl`）命令行选项或 `EXCHANGE_NO_VERIFY_SSL=1` 环境变量显式关闭校验。
+
+随后打印 `Testing connection...`：成功则写配置；失败则打印错误码并追问 `Save this unverified configuration anyway?`（默认 **No**）。按技能安全规则，除非用户明确授权，**不要**选择保存未验证配置。
 
 查看脱敏配置：
 
