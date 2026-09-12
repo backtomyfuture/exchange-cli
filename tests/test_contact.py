@@ -45,6 +45,8 @@ class TestContactResolve:
         mailbox.email_address = "zhang.san@example.com"
         mailbox.mailbox_type = "Mailbox"
         contact = MagicMock(display_name="Zhang San", job_title="Engineer", department="IT", company_name="Acme")
+        mock_conn.protocol.config.version = None
+        mock_conn.protocol.version = MagicMock(api_version="Exchange2016")
         mock_conn.protocol.resolve_names.return_value = [(mailbox, contact)]
         result = runner.invoke(cli, ["contact", "resolve", "张三"])
         assert result.exit_code == 0
@@ -52,3 +54,4 @@ class TestContactResolve:
         assert payload["data"][0]["email"] == "zhang.san@example.com"
         assert payload["data"][0]["source"] == "directory"
         mock_conn.protocol.resolve_names.assert_called_once()
+        assert mock_conn.protocol.version.api_version == "Exchange2016"

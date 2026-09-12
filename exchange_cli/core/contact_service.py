@@ -5,6 +5,7 @@ from __future__ import annotations
 from exchangelib import Q
 from exchangelib.errors import ErrorNameResolutionNoResults
 
+from .errors import CliError
 from .query import take_page
 from .serializers import serialize_contact, serialize_resolved_name
 
@@ -21,8 +22,14 @@ def search_contacts(account, query: str, *, limit: int) -> tuple[list[dict], boo
 
 
 def resolve_directory(account, query: str, *, limit: int) -> tuple[list[dict], bool]:
+    protocol = account.protocol
+    # ResolveNames reads protocol.config.version directly. Touching protocol.version
+    # forces exchangelib to detect the server version first.
+    if protocol is None:
+        raise CliError("Exchange protocol is unavailable.", code="CONNECTION_ERROR", retryable=True)
+    _ = protocol.version
     try:
-        matches = account.protocol.resolve_names(
+        matches = protocol.resolve_names(
             [query],
             return_full_contact_data=True,
             search_scope="ActiveDirectory",
