@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   preflight:
@@ -120,3 +120,32 @@ jobs:
         run: python scripts/publish_npm_tarballs.py release-artifacts/main/*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Stage GitHub Release archives
+        run: >-
+          python scripts/stage_github_release_assets.py
+          --tarball-dir release-artifacts/platforms
+          --output-dir release-artifacts/github
+      - name: Write Homebrew formula
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python scripts/write_homebrew_formula.py \
+            --version "$version" \
+            --assets-dir release-artifacts/github \
+            --output release-artifacts/github/exchange-cli.rb
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            release-artifacts/github/exchange-cli-*.tar.gz
+            release-artifacts/github/exchange-cli-*.zip
+            release-artifacts/github/SHA256SUMS
+            release-artifacts/github/exchange-cli.rb
+          )
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "exchange-cli ${GITHUB_REF_NAME}. npm packages and platform binaries." \
+            --verify-tag \
+            "${assets[@]}"

@@ -44,6 +44,18 @@ npm install -g @backtomyfuture/exchange-cli
 
 安装后会拉取当前平台的二进制包。首次启动在 macOS 上可能需要十几秒。
 
+### Homebrew（macOS 同事）
+
+这个工具面向公司内网 Exchange，不适合进 Homebrew 官方 core。同事可以装自己的 tap：
+
+```bash
+brew tap backtomyfuture/exchange-cli https://github.com/backtomyfuture/homebrew-exchange-cli.git
+brew install exchange-cli
+exchange-cli --version
+```
+
+tap 仓库会在 `v0.2.1` 发布完成后更新公式。公式从 GitHub Release 下载当前平台的预编译二进制。
+
 ### 从源码安装（开发者）
 
 ```bash

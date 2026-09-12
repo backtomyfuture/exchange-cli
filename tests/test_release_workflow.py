@@ -37,6 +37,10 @@ def test_npm_token_is_scoped_to_publish_job():
 
     assert "NPM_TOKEN" not in build_section
     assert "NPM_TOKEN" in publish_section
+    assert "contents: write" in workflow
+    assert "gh release create" in publish_section
+    assert "scripts/stage_github_release_assets.py" in publish_section
+    assert "scripts/write_homebrew_formula.py" in publish_section
 
 
 def test_platform_build_includes_every_lazy_loaded_command():
