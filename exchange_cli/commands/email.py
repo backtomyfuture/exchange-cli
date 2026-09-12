@@ -10,6 +10,7 @@ from exchangelib import EWSDateTime, EWSTimeZone, FileAttachment, HTMLBody, Mail
 
 from ..core.cli import get_account
 from ..core.email_service import (
+    _validate_folder_input,
     delete_message,
     find_message,
     list_email_summaries,
@@ -80,9 +81,7 @@ def _parse_search_date(value: str, *, is_end: bool) -> EWSDateTime:
 
 
 def _require_folder_arg(folder_name: str) -> str:
-    if not isinstance(folder_name, str) or not folder_name.strip():
-        raise CliError("Folder is required.", code="INVALID_FOLDER", exit_code=2)
-    return folder_name.strip()
+    return _validate_folder_input(folder_name)
 
 
 def _attach_files(message, attachments) -> None:
@@ -563,8 +562,6 @@ def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, m
             exit_code=2,
             retryable=False,
         )
-    account = get_account(ctx)
-    resolve_mail_folder(account, folder_name)
     click.echo(f"Watching folder '{folder_name}'. Press Ctrl+C to stop.", err=True)
     original_sigterm = None
     try:
