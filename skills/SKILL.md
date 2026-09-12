@@ -1,8 +1,8 @@
 ---
 name: exchange-cli
 description: |
-  本地部署的 Microsoft Exchange Server 单账号 CLI：读取、搜索、发送、回复和转发邮件，管理草稿、日历、任务、联系人和文件夹，并前台监听新邮件。
-  当用户要配置、测试、排查或操作当前机器上的本地 Exchange/EWS 邮箱时使用，包括“配置 Exchange”“exchange-cli 连接不上”“查邮件”“发邮件”“看日程”“建会议”“完成任务”“找联系人”“监听新邮件”等请求。
+  本地部署的 Microsoft Exchange Server 单账号 CLI：读取、搜索、发送、回复和转发邮件，标记已读、移动、删除，管理草稿、日历、任务、联系人（含公司通讯录解析）和文件夹，并前台监听新邮件。
+  当用户要配置、测试、排查或操作当前机器上的本地 Exchange/EWS 邮箱时使用，包括“配置 Exchange”“exchange-cli 连接不上”“查邮件”“发邮件”“看日程”“建会议”“完成任务”“找同事”“找联系人”“监听新邮件”等请求。
   如果用户只说 Outlook、但未说明邮箱后端，先确认是否为本地 Exchange Server。
   不适用于 Exchange Online / Microsoft 365、Gmail、飞书邮箱或其他云邮箱。
 metadata:
@@ -44,9 +44,9 @@ exchange-cli --config /path/to/config email list
 
 - `email send`、`email reply`、`email forward`
 - `draft send`
-- `email delete`、`draft delete`、`calendar delete`、`task delete`
+- `email delete`（默认移入回收站；`--permanent` 才永久删除）、`draft delete`、`calendar delete`、`task delete`
 - 带 `--attendees` 且会发邀请的 `calendar create`
-- `--notify all` 的 `calendar update`
+- `--notify all` 的 `calendar update` / `calendar delete`
 
 `CONFIRMATION_REQUIRED` 只表示缺少 CLI 参数，不代表用户已经授权。不要为了让命令成功而自行补上 `--confirm`。
 
@@ -149,7 +149,9 @@ exchange-cli config show
 - `calendar update` 和 `task update` 至少提供一个更新字段。
 - `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`。`--status` 在客户端筛选。
-- 找同事用 `contact resolve`，不要只用个人联系人 `contact search`。
+- 找同事用 `contact resolve`（公司通讯录/GAL），不要只用个人联系人 `contact search`。
+- `calendar list --end YYYY-MM-DD` 含当天；同一天查询应传相同的 start/end，不要把 end 设成次日来“包含今天”。
+- `email delete` 默认移入回收站；永久删除必须同时给 `--permanent --confirm`。
 - 会议更新/取消默认不通知参会人；`--notify all` 才会发通知，且需要 `--confirm`。
 - 写操作超时返回 `WRITE_OUTCOME_UNKNOWN` 且 `retryable=false`，不要自动重试。
 
@@ -168,6 +170,7 @@ exchange-cli email read MESSAGE_ID --save-attachments ./downloads
 exchange-cli email mark-read MESSAGE_ID
 exchange-cli email move MESSAGE_ID --folder trash
 exchange-cli email delete MESSAGE_ID --confirm
+exchange-cli email delete MESSAGE_ID --permanent --confirm
 ```
 
 搜索邮件：
@@ -194,6 +197,7 @@ exchange-cli draft send DRAFT_ID --confirm
 日历：
 
 ```bash
+exchange-cli calendar list
 exchange-cli calendar list --start "YYYY-MM-DD" --end "YYYY-MM-DD"
 exchange-cli calendar create --subject "会议" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM"
 exchange-cli calendar create --subject "会议" --start "YYYY-MM-DD HH:MM" --end "YYYY-MM-DD HH:MM" --attendees "a@example.com,b@example.com" --confirm
