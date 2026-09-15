@@ -45,6 +45,87 @@ class TestDraftCreate:
         assert data["ok"] is True
         message.save.assert_called_once()
 
+    def test_create_with_inline_attach(self, runner, mock_conn, tmp_path):
+        img = tmp_path / "img.png"
+        img.write_bytes(b"png data")
+        with patch("exchange_cli.commands.draft.Message") as message_cls:
+            message = MagicMock()
+            message.id = "D1"
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                [
+                    "draft",
+                    "create",
+                    "--to",
+                    "a@x.com",
+                    "--subject",
+                    "Draft",
+                    "--body",
+                    "WIP",
+                    "--inline-attach",
+                    f"{img}:custom_cid",
+                ],
+            )
+        assert result.exit_code == 0
+        message.attach.assert_called_once()
+        att = message.attach.call_args[0][0]
+        assert att.name == "img.png"
+        assert att.is_inline is True
+        assert att.content_id == "custom_cid"
+
+    def test_create_with_from_and_bcc(self, runner, mock_conn):
+        with patch("exchange_cli.commands.draft.Message") as message_cls:
+            message = MagicMock()
+            message.id = "D1"
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                [
+                    "draft",
+                    "create",
+                    "--to",
+                    "a@x.com",
+                    "--bcc",
+                    "bcc@x.com",
+                    "--from",
+                    "sender@x.com",
+                    "--subject",
+                    "Draft",
+                    "--body",
+                    "WIP",
+                ],
+            )
+        assert result.exit_code == 0
+        kwargs = message_cls.call_args[1]
+        assert kwargs["author"].email_address == "sender@x.com"
+        assert kwargs["bcc_recipients"][0].email_address == "bcc@x.com"
+
+    def test_create_dry_run(self, runner, tmp_path):
+        img = tmp_path / "img.png"
+        img.write_bytes(b"png")
+        result = runner.invoke(
+            cli,
+            [
+                "draft",
+                "create",
+                "--to",
+                "a@x.com",
+                "--subject",
+                "Draft",
+                "--body",
+                "WIP",
+                "--inline-attach",
+                str(img),
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["dry_run"] is True
+        assert data["data"]["preview"]["inline_attachments"][0]["content_id"] == "img.png"
+
 
 class TestDraftSend:
     def test_send(self, runner, mock_conn):

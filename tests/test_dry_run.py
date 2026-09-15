@@ -45,6 +45,18 @@ def test_dry_run_email_reply(runner):
     assert data["data"]["preview"]["requires_confirm"] is True
 
 
+def test_dry_run_email_reply_draft(runner):
+    result = runner.invoke(
+        cli,
+        ["email", "reply", "msg-123", "--body", "Reply content", "--draft", "--dry-run"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["ok"] is True
+    assert data["data"]["preview"]["draft"] is True
+    assert data["data"]["preview"]["requires_confirm"] is False
+
+
 def test_dry_run_email_forward(runner):
     result = runner.invoke(
         cli,
@@ -58,6 +70,43 @@ def test_dry_run_email_forward(runner):
     assert data["data"]["preview"]["message_id"] == "msg-123"
     assert data["data"]["preview"]["to"] == ["forward@example.com"]
     assert data["data"]["preview"]["requires_confirm"] is True
+
+
+def test_dry_run_email_forward_draft(runner):
+    result = runner.invoke(
+        cli,
+        ["email", "forward", "msg-123", "--to", "forward@example.com", "--draft", "--dry-run"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["ok"] is True
+    assert data["data"]["preview"]["draft"] is True
+    assert data["data"]["preview"]["requires_confirm"] is False
+
+
+def test_dry_run_email_send_with_inline_attach(runner, tmp_path):
+    img = tmp_path / "test.png"
+    img.write_bytes(b"123")
+    result = runner.invoke(
+        cli,
+        [
+            "email",
+            "send",
+            "--to",
+            "a@example.com",
+            "--subject",
+            "Subj",
+            "--body",
+            "Body",
+            "--inline-attach",
+            f"{img}:my-cid",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["ok"] is True
+    assert data["data"]["preview"]["inline_attachments"][0]["content_id"] == "my-cid"
 
 
 def test_dry_run_email_delete(runner):

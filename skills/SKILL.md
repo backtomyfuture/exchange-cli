@@ -77,7 +77,7 @@ exchange-cli --request-id 12345-uuid email list
 
 以下高影响操作必须先向用户展示关键影响、获得明确授权，再传入 `--confirm`：
 
-- `email send`、`email reply`、`email forward`
+- `email send`、`email reply`（未加 `--draft` 时）、`email forward`（未加 `--draft` 时）
 - `draft send`
 - `email delete`（默认移入回收站；`--permanent` 才永久删除）、`draft delete`、`calendar delete`、`task delete`
 - 带 `--attendees` 且发送邀请通知的 `calendar create`（若显式指定 `--notify none` 则不发送邀请通知，可免 `--confirm`）
@@ -88,7 +88,7 @@ exchange-cli --request-id 12345-uuid email list
 
 `CONFIRMATION_REQUIRED` 只表示缺少 CLI 参数，不代表用户已经授权。不要为了让命令成功而自行补上 `--confirm`。
 
-其他写操作——创建草稿、创建无参会人日程、更新日程、创建/更新/完成任务、标记邮件已读/未读（`email mark-read` / `email mark-unread`）、移动邮件（`email move`）——虽无需 CLI `--confirm` 参数，但均会变更邮箱或项目状态，仍只能在用户明确要求后执行。
+其他写操作——创建草稿（`draft create`，以及 `email reply --draft`、`email forward --draft` 会生成原生回复/转发项存入草稿箱并返回草稿 ID）、创建无参会人日程、更新日程、创建/更新/完成任务、标记邮件已读/未读（`email mark-read` / `email mark-unread`）、移动邮件（`email move`）——虽无需 CLI `--confirm` 参数，但均会变更邮箱或项目状态，仍只能在用户明确要求后执行。
 
 安全边界：
 
@@ -235,9 +235,10 @@ exchange-cli config show
 - 列表命令的 `--limit` 范围为 `1..200`，默认值：`email list` / `email search` 默认为 `20`；`contact list` 默认为 `50`；`contact search` / `contact resolve` 默认为 `20`。列表结果带 `truncated`。
 - `email watch` 同样支持上述全套文件夹定位机制，必须传 `--duration <seconds>`（范围 `1..86400`）或 `--forever`，杜绝 Agent 子进程挂死；`--backfill-minutes` 范围为 `1..1440`。支持通过 `SIGINT`（Ctrl+C）或 `SIGTERM` 优雅中断，Node 包装器会即时转发信号并回收底层 EWS 流式订阅与连接，彻底杜绝孤儿进程。
 - `email search` 支持关键字 `query`、`--from` 发件人（未传该选项则不进行过滤且顶层无 `from_resolved` 字段；传空值报错 `INVALID_INPUT`；支持邮箱或人名，中文名含空格如 `张 霞` 亦可自动去空反查通讯录；传了非空值时输出 `from_resolved: true/false` 区分通讯录未命中与无邮件）、`--has-attachments` 仅含附件、`--with-preview` 摘要预览，以及 RFC 3339（如 `2026-09-12T10:00:00Z`）或 `YYYY-MM-DD` 格式的 `--start`/`--end`（EWS 底层不支持对收件人列表字段的检索过滤）。⚠️ **索引延迟警示**：`email search` 存在服务端异步全文索引延迟（实测新送达邮件在数十秒甚至更长时间内返回 `count: 0`），**严禁用 `search` 轮询检查新邮件是否到达；查验新邮件必须使用 `email list`**。
-- `email send` 与 `draft create`：支持 `--attach <path>` 携带文件附件（可多传），支持 `--body-type [text|html]`（默认 text）；支持 `--cc` 抄送收件人；`email send` 还支持 `--bcc` 密送收件人。
+- `email send` 与 `draft create`：支持 `--attach <path>` 携带普通文件附件（可多传），支持 `--inline-attach <path[:cid]>` 携带内联附件（可多传，省略 `:cid` 默认取文件名；配合 `--body-type html` 可在正文中以 `<img src="cid:xxx">` 引用且 Exchange 服务端不显示顶部回形针）；支持 `--cc` 抄送收件人；均支持 `--bcc` 密送收件人；均支持 `--from <addr>` 显式绑定发件人（author / Send-As）；均支持 `--body-type [text|html]`（默认 text）。
+- `email reply` 与 `email forward`：支持 `--draft` 将原生回复/转发直接保存至草稿箱（自动由服务端拼接历史邮件引用头、维护会话树，返回新建草稿 ID，免 `--confirm`）；均支持 `--body-type [text|html]`；`email reply` 还支持 `--from <addr>`。
 - `calendar create` 与 `calendar update`：支持 `--location` 指定会议地点。`calendar update` 和 `task update` 至少提供一个更新字段。
-- `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。
+- `email send`、`email reply`、`draft create` 至少提供 `--body` 或 `--body-file`；同时提供时 `--body-file` 优先。`email forward` 的 `--body` 为可选补充留言。
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`（大小写不敏感，如 `notstarted` 亦可接受）。`--status` 在客户端筛选。
 - 查找组织成员/同事用 `contact resolve`（企业全局地址簿/GAL），不要只用个人联系人 `contact search`。`contact resolve` 与 `contact search` 均校验非空查询（空值返回 `INVALID_INPUT`）。
 - `calendar list` 不传参数默认查询当天（无 `--today` 选项）；指定范围时 `--end YYYY-MM-DD` 含当天，查询某一天应传相同 start/end 或直接不传参数。
@@ -292,18 +293,26 @@ exchange-cli email send --to "user@example.com" --subject "主题" --body "正�
 exchange-cli email send --to "user@example.com" --subject "主题" --body-file ./body.txt --confirm
 # 携带附件、抄送与密送发送：
 exchange-cli email send --to "user@example.com" --cc "manager@example.com" --bcc "audit@example.com" --subject "合同" --body "详见附件" --attach ./contract.pdf --confirm
-# 发送 HTML 富文本：
-exchange-cli email send --to "user@example.com" --subject "周报" --body "<h1>周报</h1>" --body-type html --confirm
+# 发送 HTML 富文本与内联图片（CID 引用）：
+exchange-cli email send --to "user@example.com" --subject "周报" --body '<h1>周报</h1><p><img src="cid:logo@company"></p>' --body-type html --inline-attach ./logo.png:logo@company --confirm
+# 指定发件人别名发送（Send-As）：
+exchange-cli email send --to "user@example.com" --from "alias@example.com" --subject "公告" --body "内容" --confirm
 exchange-cli email reply MESSAGE_ID --body "回复内容" --all --confirm
+# 原生回复存草稿（自动继承原邮件内联附件与会话树，返回新建草稿 ID，免 confirm）：
+exchange-cli email reply MESSAGE_ID --body "回复内容" --draft
 exchange-cli email forward MESSAGE_ID --to "user@example.com" --body "补充说明" --confirm
+# 原生转发存草稿（返回新建草稿 ID，免 confirm）：
+exchange-cli email forward MESSAGE_ID --to "user@example.com" --body "补充说明" --draft
 ```
 
 草稿：
 
 ```bash
 exchange-cli draft create --to "user@example.com" --subject "主题" --body "正文"
-# 包含抄送与附件的草稿：
-exchange-cli draft create --to "user@example.com" --cc "team@example.com" --subject "方案草稿" --body "请查阅" --attach ./draft.docx
+# 包含抄送、密送、内联图片与普通附件的草稿：
+exchange-cli draft create --to "user@example.com" --cc "team@example.com" --bcc "audit@example.com" --subject "方案草稿" --body '<h1>方案</h1><p><img src="cid:chart.png"></p>' --body-type html --attach ./draft.docx --inline-attach ./chart.png
+# 指定发件人创建草稿：
+exchange-cli draft create --to "user@example.com" --from "alias@example.com" --subject "公文草稿" --body "正文"
 exchange-cli draft send DRAFT_ID --dry-run
 exchange-cli draft send DRAFT_ID --confirm
 ```

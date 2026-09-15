@@ -40,6 +40,8 @@ def serialize_attachment_summary(attachment):
         "name": getattr(attachment, "name", None),
         "size": getattr(attachment, "size", None),
         "content_type": getattr(attachment, "content_type", None),
+        "is_inline": bool(getattr(attachment, "is_inline", False)),
+        "content_id": getattr(attachment, "content_id", None),
     }
 
 
@@ -101,9 +103,7 @@ def serialize_email_detail(
         result["body_length"] = body_len
         result["body_truncated"] = truncated
 
-        want_html = include_html or (
-            fields is not None and any(f in fields for f in ("body_html", "unique_body_html"))
-        )
+        want_html = include_html or (fields is not None and any(f in fields for f in ("body_html", "unique_body_html")))
         if want_html:
             result["body_html"] = raw_body
             result["unique_body_html"] = _safe_str(getattr(message, "unique_body", None))
@@ -111,9 +111,7 @@ def serialize_email_detail(
     result["conversation_id"] = _serialize_conversation_id(getattr(message, "conversation_id", None))
     result["internet_message_id"] = _safe_str(getattr(message, "message_id", None))
     result["bcc"] = _serialize_mailbox_list(getattr(message, "bcc_recipients", None))
-    result["attachments"] = [
-        serialize_attachment_summary(att) for att in (getattr(message, "attachments", None) or [])
-    ]
+    result["attachments"] = [serialize_attachment_summary(att) for att in (getattr(message, "attachments", None) or [])]
     if fields is None:
         return result
     return {field: result[field] for field in fields if field in result}

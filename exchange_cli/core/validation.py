@@ -83,6 +83,7 @@ def validate_bounded_int(value: Any, *, field: str, minimum: int, maximum: int) 
         )
     return parsed
 
+
 def ensure_start_before_end(start: Any, end: Any, *, action: str) -> None:
     """Reject empty or reversed time ranges before contacting Exchange."""
 
@@ -239,3 +240,39 @@ def save_file_attachments(save_dir: Path, attachments: Iterable[Any]) -> list[Pa
         ) from exc
 
     return targets
+
+
+def parse_inline_attachment(value: str) -> tuple[Path, str]:
+    """Parse an inline attachment specification 'path[:content_id]'.
+
+    Returns (file_path, content_id). If content_id is omitted, defaults to file_path.name.
+    """
+    val = value.strip()
+    if not val:
+        raise CliError("Inline attachment path cannot be empty.", code="INVALID_INPUT", exit_code=2)
+
+    path_str = val
+    cid = None
+
+    if ":" in val:
+        parts = val.split(":")
+        if len(parts) == 2 and len(parts[0]) == 1 and parts[0].isalpha() and ("/" in parts[1] or "\\" in parts[1]):
+            path_str = val
+            cid = None
+        elif len(parts) > 2 and len(parts[0]) == 1 and parts[0].isalpha() and ("/" in parts[1] or "\\" in parts[1]):
+            path_str = f"{parts[0]}:{parts[1]}"
+            cid = ":".join(parts[2:]).strip()
+        else:
+            path_str, cid_part = val.rsplit(":", 1)
+            cid = cid_part.strip()
+
+    file_path = Path(path_str).expanduser()
+    if not file_path.exists():
+        raise CliError(f"Inline attachment file not found: {path_str}", code="INVALID_INPUT", exit_code=2)
+    if not file_path.is_file():
+        raise CliError(f"Inline attachment path is not a file: {path_str}", code="INVALID_INPUT", exit_code=2)
+
+    if not cid:
+        cid = file_path.name
+
+    return file_path, cid

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import click
 import pytest
 from click.testing import CliRunner
-from exchangelib import FileAttachment
+from exchangelib import FileAttachment, HTMLBody
 from exchangelib.errors import DoesNotExist, TransportError
 from exchangelib.properties import ConversationId
 
@@ -153,7 +153,6 @@ class TestEmailRead:
         assert data["ok"] is False
         assert data["code"] == "NOT_FOUND"
         assert data["retryable"] is False
-
 
     def test_read_message_default_markdown(self, runner, mock_conn):
         message = _mock_message()
@@ -324,6 +323,170 @@ class TestEmailSend:
         assert payload["retryable"] is False
         assert payload["outcome"] == "unknown"
 
+    def test_send_with_inline_attach_and_from(self, runner, mock_conn, tmp_path):
+        img = tmp_path / "chart.png"
+        img.write_bytes(b"chart png")
+        with patch("exchange_cli.commands.email.Message") as message_cls:
+            message = MagicMock()
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "send",
+                    "--to",
+                    "target@x.com",
+                    "--from",
+                    "sender@x.com",
+                    "--subject",
+                    "With inline image",
+                    "--body",
+                    '<p><img src="cid:chart@cid"></p>',
+                    "--body-type",
+                    "html",
+                    "--inline-attach",
+                    f"{img}:chart@cid",
+                    "--confirm",
+                ],
+            )
+
+        assert result.exit_code == 0
+        kwargs = message_cls.call_args[1]
+        assert kwargs["author"].email_address == "sender@x.com"
+        message.attach.assert_called_once()
+        att = message.attach.call_args[0][0]
+        assert att.name == "chart.png"
+        assert att.is_inline is True
+        assert att.content_id == "chart@cid"
+        message.send_and_save.assert_called_once()
+
+    def test_reply_send_success(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "reply", "M1", "--body", "Thank you", "--confirm"],
+            )
+
+        assert result.exit_code == 0
+        message.reply.assert_called_once()
+        assert message.reply.call_args[1]["body"] == "Thank you"
+
+    def test_reply_draft_creates_draft_and_returns_id(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        reply_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_REPLY_1"
+        reply_item.save.return_value = saved_item
+        message.create_reply.return_value = reply_item
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "reply", "M1", "--body", "Draft content", "--draft"],
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["id"] == "DRAFT_REPLY_1"
+        assert data["data"]["original_id"] == "M1"
+        message.create_reply.assert_called_once()
+        reply_item.save.assert_called_once_with(folder=mock_conn.drafts)
+
+    def test_reply_all_draft(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        reply_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_ALL_1"
+        reply_item.save.return_value = saved_item
+        message.create_reply_all.return_value = reply_item
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "reply", "M1", "--body", "Draft all", "--all", "--draft"],
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["id"] == "DRAFT_ALL_1"
+        message.create_reply_all.assert_called_once()
+        reply_item.save.assert_called_once_with(folder=mock_conn.drafts)
+
+    def test_reply_draft_with_from_and_html(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        reply_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_HTML_1"
+        reply_item.save.return_value = saved_item
+        message.create_reply.return_value = reply_item
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "reply",
+                    "M1",
+                    "--body",
+                    "<b>Bold</b>",
+                    "--body-type",
+                    "html",
+                    "--from",
+                    "alias@x.com",
+                    "--draft",
+                ],
+            )
+
+        assert result.exit_code == 0
+        call_kwargs = message.create_reply.call_args[1]
+        assert call_kwargs["author"].email_address == "alias@x.com"
+        assert isinstance(call_kwargs["body"], HTMLBody)
+        reply_item.save.assert_called_once_with(folder=mock_conn.drafts)
+
+    def test_forward_send_success(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "forward", "M1", "--to", "colleague@x.com", "--confirm"],
+            )
+
+        assert result.exit_code == 0
+        message.forward.assert_called_once()
+
+    def test_forward_draft_creates_draft_and_returns_id(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        forward_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_FWD_1"
+        forward_item.save.return_value = saved_item
+        message.create_forward.return_value = forward_item
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "forward",
+                    "M1",
+                    "--to",
+                    "colleague@x.com",
+                    "--body",
+                    "FYI",
+                    "--draft",
+                ],
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["id"] == "DRAFT_FWD_1"
+        assert data["data"]["to"] == ["colleague@x.com"]
+        forward_item.save.assert_called_once_with(folder=mock_conn.drafts)
+
     def test_mark_read(self, runner, mock_conn):
         message = _mock_message()
         mock_conn.inbox.get.return_value = message
@@ -416,9 +579,9 @@ class TestEmailSearch:
             assert "张霞" in q_expr
             assert "zhang-xia@tianjin-air.com" in q_expr
 
-
     def test_search_criteria_can_serialize_to_xml(self):
         from exchangelib import Folder, Message, Q
+
         folder = MagicMock(spec=Folder)
         folder.get_item_field_by_fieldname.side_effect = Message.get_field_by_fieldname
         start_dt = _parse_search_date("2026-09-12T00:00:00Z", is_end=False)
@@ -706,5 +869,3 @@ class TestFolderResolution:
             data = json.loads(result.stdout)
             assert data["ok"] is False
             assert data["code"] == "INVALID_FOLDER"
-
-

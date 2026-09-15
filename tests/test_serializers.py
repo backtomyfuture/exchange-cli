@@ -192,3 +192,22 @@ class TestSerializeFolder:
         result = serialize_folder(folder)
         assert result["name"] == "Inbox"
         assert result["unread_count"] == 5
+
+
+class TestSerializeAttachmentSummary:
+    def test_attachment_summary(self):
+        from exchange_cli.core.serializers import serialize_attachment_summary
+
+        att = MagicMock()
+        att.name = "image.png"
+        att.size = 1024
+        att.content_type = "image/png"
+        att.is_inline = True
+        att.content_id = "logo@corp"
+
+        data = serialize_attachment_summary(att)
+        assert data["name"] == "image.png"
+        assert data["size"] == 1024
+        assert data["content_type"] == "image/png"
+        assert data["is_inline"] is True
+        assert data["content_id"] == "logo@corp"

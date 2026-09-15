@@ -104,3 +104,35 @@ def test_save_file_attachments_never_overwrites(tmp_path):
 
     assert caught.value.code == "ATTACHMENT_EXISTS"
     assert target.read_bytes() == b"existing"
+
+
+def test_parse_inline_attachment(tmp_path):
+    from exchange_cli.core.validation import parse_inline_attachment
+
+    test_file = tmp_path / "logo.png"
+    test_file.write_bytes(b"image data")
+
+    # Path only -> cid defaults to filename
+    path, cid = parse_inline_attachment(str(test_file))
+    assert path == test_file
+    assert cid == "logo.png"
+
+    # Path with custom cid
+    path, cid = parse_inline_attachment(f"{test_file}:custom_cid@123")
+    assert path == test_file
+    assert cid == "custom_cid@123"
+
+    # Empty string raises CliError
+    with pytest.raises(CliError) as caught:
+        parse_inline_attachment("")
+    assert caught.value.code == "INVALID_INPUT"
+
+    # Non-existent file raises CliError
+    with pytest.raises(CliError) as caught:
+        parse_inline_attachment(str(tmp_path / "not_found.png"))
+    assert caught.value.code == "INVALID_INPUT"
+
+    # Directory raises CliError
+    with pytest.raises(CliError) as caught:
+        parse_inline_attachment(str(tmp_path))
+    assert caught.value.code == "INVALID_INPUT"

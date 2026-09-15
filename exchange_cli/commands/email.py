@@ -33,6 +33,7 @@ from ..core.validation import (
     MAX_WATCH_EVENTS,
     ensure_start_before_end,
     parse_field_list,
+    parse_inline_attachment,
     require_confirmation,
     save_file_attachments,
 )
@@ -84,11 +85,15 @@ def _require_folder_arg(folder_name: str) -> str:
     return _validate_folder_input(folder_name)
 
 
-def _attach_files(message, attachments) -> None:
-    for path in attachments:
+def _attach_files(message, attachments, inline_attachments=None) -> None:
+    for path in attachments or []:
         with open(path, "rb") as handle:
             content = handle.read()
         message.attach(FileAttachment(name=path.name, content=content))
+    for path, cid in inline_attachments or []:
+        with open(path, "rb") as handle:
+            content = handle.read()
+        message.attach(FileAttachment(name=path.name, content=content, is_inline=True, content_id=cid))
 
 
 @click.group("email")
@@ -191,6 +196,7 @@ def email_read(ctx, message_id, save_dir, body_format, include_html, max_body_le
 @click.option("--to", "to_addrs", required=True, multiple=True, help="Recipient email(s)")
 @click.option("--cc", "cc_addrs", multiple=True, help="CC email(s)")
 @click.option("--bcc", "bcc_addrs", multiple=True, help="BCC email(s)")
+@click.option("--from", "from_addr", default=None, help="Sender email (author)")
 @click.option("--subject", required=True, help="Email subject")
 @click.option("--body", default=None, help="Email body text")
 @click.option(
@@ -207,17 +213,39 @@ def email_read(ctx, message_id, save_dir, body_format, include_html, max_body_le
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Attach file(s)",
 )
+@click.option(
+    "--inline-attach",
+    "inline_attachments",
+    multiple=True,
+    help="Attach inline file(s) in format 'path[:cid]'",
+)
 @click.option("--dry-run", is_flag=True, default=False, help="Simulate send without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm sending the email")
 @click.pass_context
-def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, body_type, attachments, dry_run, confirm):
+def email_send(
+    ctx,
+    to_addrs,
+    cc_addrs,
+    bcc_addrs,
+    from_addr,
+    subject,
+    body,
+    body_file,
+    body_type,
+    attachments,
+    inline_attachments,
+    dry_run,
+    confirm,
+):
     """Send a new email."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
+    parsed_inline = [parse_inline_attachment(item) for item in inline_attachments]
     if dry_run:
-        attachment_previews = [
-            {"name": p.name, "size": p.stat().st_size if p.is_file() else None}
-            for p in attachments
+        attachment_previews = [{"name": p.name, "size": p.stat().st_size if p.is_file() else None} for p in attachments]
+        inline_attachment_previews = [
+            {"name": p.name, "size": p.stat().st_size if p.is_file() else None, "content_id": cid}
+            for p, cid in parsed_inline
         ]
         formatter.success(
             {
@@ -227,10 +255,12 @@ def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, bod
                     "to": list(to_addrs),
                     "cc": list(cc_addrs),
                     "bcc": list(bcc_addrs),
+                    "from": from_addr,
                     "subject": subject,
                     "body_type": body_type,
                     "body_length": len(body),
                     "attachments": attachment_previews,
+                    "inline_attachments": inline_attachment_previews,
                     "requires_confirm": True,
                 },
             }
@@ -241,6 +271,7 @@ def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, bod
     try:
         account = get_connection(ctx)
         message_body = HTMLBody(body) if body_type == "html" else body
+        author = Mailbox(email_address=from_addr) if from_addr else None
         message = Message(
             account=account,
             subject=subject,
@@ -248,8 +279,9 @@ def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, bod
             to_recipients=[Mailbox(email_address=addr) for addr in to_addrs],
             cc_recipients=[Mailbox(email_address=addr) for addr in cc_addrs],
             bcc_recipients=[Mailbox(email_address=addr) for addr in bcc_addrs],
+            author=author,
         )
-        _attach_files(message, attachments)
+        _attach_files(message, attachments, parsed_inline)
         message.send_and_save()
         formatter.success({"message": "Email sent", "subject": subject, "to": list(to_addrs), "outcome": "succeeded"})
     except Exception as exc:
@@ -265,11 +297,14 @@ def email_send(ctx, to_addrs, cc_addrs, bcc_addrs, subject, body, body_file, bod
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Read body from file",
 )
+@click.option("--body-type", default="text", type=click.Choice(["text", "html"]), help="Body type")
+@click.option("--from", "from_addr", default=None, help="Sender email (author)")
 @click.option("--all", "reply_all", is_flag=True, default=False, help="Reply to all")
+@click.option("--draft", is_flag=True, default=False, help="Save as draft in Drafts folder instead of sending")
 @click.option("--dry-run", is_flag=True, default=False, help="Simulate reply without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm sending the reply")
 @click.pass_context
-def email_reply(ctx, message_id, body, body_file, reply_all, dry_run, confirm):
+def email_reply(ctx, message_id, body, body_file, body_type, from_addr, reply_all, draft, dry_run, confirm):
     """Reply to an existing message."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
@@ -281,21 +316,48 @@ def email_reply(ctx, message_id, body, body_file, reply_all, dry_run, confirm):
                 "preview": {
                     "message_id": message_id,
                     "reply_all": reply_all,
+                    "body_type": body_type,
                     "body_length": len(body),
-                    "requires_confirm": True,
+                    "from": from_addr,
+                    "draft": draft,
+                    "requires_confirm": not draft,
                 },
             }
         )
         return
-    require_confirmation(confirm, action="email.reply")
+    if not draft:
+        require_confirmation(confirm, action="email.reply")
     try:
         account = get_connection(ctx)
         message = require_message(account, message_id)
-        if reply_all:
-            message.reply_all(subject=f"Re: {message.subject}", body=body)
+        reply_body = HTMLBody(body) if body_type == "html" else body
+        author = Mailbox(email_address=from_addr) if from_addr else None
+        reply_kwargs = {"subject": f"Re: {message.subject}", "body": reply_body}
+        if author:
+            reply_kwargs["author"] = author
+
+        if draft:
+            if reply_all:
+                reply_item = message.create_reply_all(**reply_kwargs)
+            else:
+                reply_item = message.create_reply(**reply_kwargs)
+            saved_item = reply_item.save(folder=account.drafts)
+            draft_id = getattr(saved_item, "id", None)
+            formatter.success(
+                {
+                    "message": "Reply draft created",
+                    "id": draft_id,
+                    "original_id": message_id,
+                    "subject": f"Re: {message.subject}",
+                    "outcome": "succeeded",
+                }
+            )
         else:
-            message.reply(subject=f"Re: {message.subject}", body=body)
-        formatter.success({"message": "Reply sent", "original_id": message_id, "outcome": "succeeded"})
+            if reply_all:
+                message.reply_all(**reply_kwargs)
+            else:
+                message.reply(**reply_kwargs)
+            formatter.success({"message": "Reply sent", "original_id": message_id, "outcome": "succeeded"})
     except Exception as exc:
         raise classify_write_exception(exc) from exc
 
@@ -310,10 +372,12 @@ def email_reply(ctx, message_id, body, body_file, reply_all, dry_run, confirm):
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Read body from file",
 )
+@click.option("--body-type", default="text", type=click.Choice(["text", "html"]), help="Body type")
+@click.option("--draft", is_flag=True, default=False, help="Save as draft in Drafts folder instead of sending")
 @click.option("--dry-run", is_flag=True, default=False, help="Simulate forward without connecting or sending")
 @click.option("--confirm", is_flag=True, help="Confirm forwarding the email")
 @click.pass_context
-def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
+def email_forward(ctx, message_id, to_addrs, body, body_file, body_type, draft, dry_run, confirm):
     """Forward an existing message."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file, required=False) or ""
@@ -325,24 +389,48 @@ def email_forward(ctx, message_id, to_addrs, body, body_file, dry_run, confirm):
                 "preview": {
                     "message_id": message_id,
                     "to": list(to_addrs),
+                    "body_type": body_type,
                     "body_length": len(body),
-                    "requires_confirm": True,
+                    "draft": draft,
+                    "requires_confirm": not draft,
                 },
             }
         )
         return
-    require_confirmation(confirm, action="email.forward")
+    if not draft:
+        require_confirmation(confirm, action="email.forward")
     try:
         account = get_connection(ctx)
         message = require_message(account, message_id)
-        message.forward(
-            subject=f"Fwd: {message.subject}",
-            body=body,
-            to_recipients=[Mailbox(email_address=addr) for addr in to_addrs],
-        )
-        formatter.success(
-            {"message": "Email forwarded", "original_id": message_id, "to": list(to_addrs), "outcome": "succeeded"}
-        )
+        forward_body = HTMLBody(body) if body_type == "html" else body
+        to_recipients = [Mailbox(email_address=addr) for addr in to_addrs]
+        if draft:
+            forward_item = message.create_forward(
+                subject=f"Fwd: {message.subject}",
+                body=forward_body,
+                to_recipients=to_recipients,
+            )
+            saved_item = forward_item.save(folder=account.drafts)
+            draft_id = getattr(saved_item, "id", None)
+            formatter.success(
+                {
+                    "message": "Forward draft created",
+                    "id": draft_id,
+                    "original_id": message_id,
+                    "to": list(to_addrs),
+                    "subject": f"Fwd: {message.subject}",
+                    "outcome": "succeeded",
+                }
+            )
+        else:
+            message.forward(
+                subject=f"Fwd: {message.subject}",
+                body=forward_body,
+                to_recipients=to_recipients,
+            )
+            formatter.success(
+                {"message": "Email forwarded", "original_id": message_id, "to": list(to_addrs), "outcome": "succeeded"}
+            )
     except Exception as exc:
         raise classify_write_exception(exc) from exc
 
@@ -576,6 +664,7 @@ def email_watch(ctx, folder_name, backfill_minutes, duration_seconds, forever, m
     click.echo(f"Watching folder '{folder_name}'. Press Ctrl+C to stop.", err=True)
     original_sigterm = None
     try:
+
         def _sigterm_handler(signum, frame):
             raise KeyboardInterrupt()
 

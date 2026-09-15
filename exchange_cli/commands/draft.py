@@ -12,18 +12,22 @@ from ..core.io import resolve_body
 from ..core.output import OutputFormatter
 from ..core.query import take_page
 from ..core.serializers import serialize_email_summary
-from ..core.validation import MAX_RESULTS, require_confirmation
+from ..core.validation import MAX_RESULTS, parse_inline_attachment, require_confirmation
 
 
 def get_connection(ctx):
     return get_account(ctx)
 
 
-def _attach_files(message, attachments) -> None:
-    for path in attachments:
+def _attach_files(message, attachments, inline_attachments=None) -> None:
+    for path in attachments or []:
         with open(path, "rb") as handle:
             content = handle.read()
         message.attach(FileAttachment(name=path.name, content=content))
+    for path, cid in inline_attachments or []:
+        with open(path, "rb") as handle:
+            content = handle.read()
+        message.attach(FileAttachment(name=path.name, content=content, is_inline=True, content_id=cid))
 
 
 @click.group("draft")
@@ -50,6 +54,8 @@ def draft_list(ctx, limit):
 @draft.command("create")
 @click.option("--to", "to_addrs", multiple=True, help="Recipient email(s)")
 @click.option("--cc", "cc_addrs", multiple=True, help="CC email(s)")
+@click.option("--bcc", "bcc_addrs", multiple=True, help="BCC email(s)")
+@click.option("--from", "from_addr", default=None, help="Sender email (author)")
 @click.option("--subject", required=True, help="Subject")
 @click.option("--body", default=None, help="Body text")
 @click.option(
@@ -66,14 +72,62 @@ def draft_list(ctx, limit):
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Attach file(s)",
 )
+@click.option(
+    "--inline-attach",
+    "inline_attachments",
+    multiple=True,
+    help="Attach inline file(s) in format 'path[:cid]'",
+)
+@click.option("--dry-run", is_flag=True, default=False, help="Simulate draft creation without connecting or saving")
 @click.pass_context
-def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_file, body_type, attachments):
+def draft_create(
+    ctx,
+    to_addrs,
+    cc_addrs,
+    bcc_addrs,
+    from_addr,
+    subject,
+    body,
+    body_file,
+    body_type,
+    attachments,
+    inline_attachments,
+    dry_run,
+):
     """Create a draft message without sending."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
+    parsed_inline = [parse_inline_attachment(item) for item in inline_attachments]
+    if dry_run:
+        attachment_previews = [{"name": p.name, "size": p.stat().st_size if p.is_file() else None} for p in attachments]
+        inline_attachment_previews = [
+            {"name": p.name, "size": p.stat().st_size if p.is_file() else None, "content_id": cid}
+            for p, cid in parsed_inline
+        ]
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "draft.create",
+                "preview": {
+                    "to": list(to_addrs),
+                    "cc": list(cc_addrs),
+                    "bcc": list(bcc_addrs),
+                    "from": from_addr,
+                    "subject": subject,
+                    "body_type": body_type,
+                    "body_length": len(body),
+                    "attachments": attachment_previews,
+                    "inline_attachments": inline_attachment_previews,
+                    "requires_confirm": False,
+                },
+            }
+        )
+        return
+
     try:
         account = get_connection(ctx)
         message_body = HTMLBody(body) if body_type == "html" else body
+        author = Mailbox(email_address=from_addr) if from_addr else None
         message = Message(
             account=account,
             folder=account.drafts,
@@ -81,8 +135,10 @@ def draft_create(ctx, to_addrs, cc_addrs, subject, body, body_file, body_type, a
             body=message_body,
             to_recipients=[Mailbox(email_address=addr) for addr in to_addrs],
             cc_recipients=[Mailbox(email_address=addr) for addr in cc_addrs],
+            bcc_recipients=[Mailbox(email_address=addr) for addr in bcc_addrs],
+            author=author,
         )
-        _attach_files(message, attachments)
+        _attach_files(message, attachments, parsed_inline)
         message.save()
         formatter.success({"message": "Draft created", "id": message.id, "subject": subject, "outcome": "succeeded"})
     except Exception as exc:
