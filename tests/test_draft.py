@@ -101,6 +101,70 @@ class TestDraftCreate:
         assert kwargs["author"].email_address == "sender@x.com"
         assert kwargs["bcc_recipients"][0].email_address == "bcc@x.com"
 
+    def test_create_sanitizes_html_by_default(self, runner, mock_conn):
+        with patch("exchange_cli.commands.draft.Message") as message_cls:
+            message = MagicMock()
+            message.id = "D1"
+            message_cls.return_value = message
+            raw_html = '<meta name="ProgId" content="Word.Document"><p>Hello<o:p></o:p></p>'
+            result = runner.invoke(
+                cli,
+                [
+                    "draft",
+                    "create",
+                    "--to",
+                    "a@x.com",
+                    "--subject",
+                    "Draft",
+                    "--body",
+                    raw_html,
+                    "--body-type",
+                    "html",
+                ],
+            )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["sanitized"] is True
+        assert "word_meta" in data["data"]["sanitized_rules"]
+        assert "office_xml_tags" in data["data"]["sanitized_rules"]
+        kwargs = message_cls.call_args[1]
+        cleaned_body_str = str(kwargs["body"])
+        assert "ProgId" not in cleaned_body_str
+        assert "<o:p>" not in cleaned_body_str
+        assert "<p>Hello</p>" in cleaned_body_str
+
+    def test_create_html_no_sanitize_skips_cleaning(self, runner, mock_conn):
+        with patch("exchange_cli.commands.draft.Message") as message_cls:
+            message = MagicMock()
+            message.id = "D1"
+            message_cls.return_value = message
+            raw_html = '<meta name="ProgId" content="Word.Document"><p>Hello<o:p></o:p></p>'
+            result = runner.invoke(
+                cli,
+                [
+                    "draft",
+                    "create",
+                    "--to",
+                    "a@x.com",
+                    "--subject",
+                    "Draft",
+                    "--body",
+                    raw_html,
+                    "--body-type",
+                    "html",
+                    "--no-sanitize",
+                ],
+            )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["sanitized"] is False
+        assert "sanitized_rules" not in data["data"]
+        kwargs = message_cls.call_args[1]
+        cleaned_body_str = str(kwargs["body"])
+        assert "ProgId" in cleaned_body_str
+
     def test_create_dry_run(self, runner, tmp_path):
         img = tmp_path / "img.png"
         img.write_bytes(b"png")

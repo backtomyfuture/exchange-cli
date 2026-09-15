@@ -38,6 +38,10 @@ WELL_KNOWN_FOLDERS: dict[str, tuple[str | None, tuple[str, ...]]] = {
     # Archive
     "archive": (None, ("Archive", "归档", "封存")),
     "归档": (None, ("Archive", "归档", "封存")),
+    # Recoverable Items (the EWS soft-delete dumpster)
+    "recoverable-deletions": ("recoverable_items_deletions", ()),
+    "recoverable-items-deletions": ("recoverable_items_deletions", ()),
+    "recoverable-root": ("recoverable_items_root", ()),
 }
 
 EWS_ID_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-")
@@ -105,18 +109,19 @@ def is_email_item(item) -> bool:
     return hasattr(item, "sender")
 
 
-def _resolve_folder_by_id(account, folder_id: str):
+def _resolve_folder_by_id(account, folder_id: str, *, root=None):
     """Attempt to resolve an Exchange folder by its EWS folder ID."""
+    root = root or account.root
     try:
-        if hasattr(account.root, "_folders_map") and folder_id in account.root._folders_map:
-            return account.root._folders_map[folder_id]
+        if hasattr(root, "_folders_map") and folder_id in root._folders_map:
+            return root._folders_map[folder_id]
     except Exception:
         pass
 
     try:
         from exchangelib.folders import FolderCollection
 
-        folders = list(FolderCollection(account=account, folders=[Folder(root=account.root, id=folder_id)]).resolve())
+        folders = list(FolderCollection(account=account, folders=[Folder(root=root, id=folder_id)]).resolve())
         if folders and not isinstance(folders[0], Exception):
             return folders[0]
     except (*NOT_FOUND_EXCEPTIONS, ResponseMessageError, ValueError, TypeError):
@@ -125,8 +130,8 @@ def _resolve_folder_by_id(account, folder_id: str):
         raise
 
     try:
-        if hasattr(account, "root") and hasattr(account.root, "get_folder"):
-            return account.root.get_folder(Folder(root=account.root, id=folder_id))
+        if hasattr(root, "get_folder"):
+            return root.get_folder(Folder(root=root, id=folder_id))
     except (*NOT_FOUND_EXCEPTIONS, ResponseMessageError, ValueError, TypeError):
         pass
     except Exception:
@@ -203,58 +208,82 @@ def _resolve_folder_path(account, path: str):
     return current
 
 
+def resolve_archive_folder(account, folder_name: str):
+    """Resolve a destination within the account's online archive mailbox.
+
+    ArchiveItem requires a folder in the archive mailbox. Reusing
+    ``resolve_mail_folder`` here would silently target a same-named folder in
+    the primary mailbox, which is a move rather than an archive operation.
+    """
+    raw = _validate_folder_input(folder_name)
+    lowered = raw.lower()
+    inbox_aliases = {"inbox", "archive", "archive-inbox", "归档", "封存"}
+    if lowered in inbox_aliases:
+        return account.archive_inbox
+
+    archive_root = account.archive_root
+    if _looks_like_ews_id(raw):
+        resolved_folder = _resolve_folder_by_id(account, raw, root=archive_root)
+        if resolved_folder is not None:
+            return resolved_folder
+
+    parts = [part.strip() for part in raw.replace("\\", "/").split("/") if part.strip() and part.strip() != "."]
+    if not parts:
+        raise CliError("Archive folder path is empty.", code="INVALID_FOLDER", exit_code=2)
+
+    current = account.archive_msg_folder_root
+    if parts[0].lower() in inbox_aliases:
+        current = account.archive_inbox
+        parts = parts[1:]
+    for part in parts:
+        try:
+            current = current / part
+        except Exception as exc:
+            raise CliError(f"Archive folder not found: {raw}.", code="NOT_FOUND") from exc
+    return current
+
+
 def scan_email_page(queryset, limit: int, scan_limit: int = 2000) -> tuple[list, bool, int]:
     """Take up to `limit` email items, skipping non-email items such as contacts or tasks."""
-    try:
-        initial_page = list(queryset[: limit + 1])
-    except Exception:
-        initial_page = []
+    # Do not turn an EWS failure into a successful, empty result. A caller must
+    # be able to distinguish an empty folder from a broken connection, expired
+    # credential, or server-side query failure.
+    initial_page = list(queryset[: limit + 1])
 
-    if all(is_email_item(item) for item in initial_page):
-        return initial_page[:limit], len(initial_page) > limit, 0
-
-    has_more_items = len(initial_page) > limit
     email_items = []
     skipped_items = 0
     scanned = 0
-    exhausted = not has_more_items
 
     for item in initial_page:
         scanned += 1
         if is_email_item(item):
+            if len(email_items) == limit:
+                return email_items, True, skipped_items
             email_items.append(item)
-            if len(email_items) >= limit:
-                break
         else:
             skipped_items += 1
 
-    if has_more_items and len(email_items) < limit:
-        try:
-            for item in queryset[scanned:]:
-                scanned += 1
-                if scanned > scan_limit:
-                    exhausted = False
-                    break
-                if is_email_item(item):
-                    email_items.append(item)
-                    if len(email_items) >= limit:
-                        break
-                else:
-                    skipped_items += 1
-        except Exception:
-            pass
+    # An under-filled first page proves the query is exhausted. When it is
+    # full but contains non-email items, keep scanning until we can either
+    # collect one extra email (therefore truncated) or exhaust the query.
+    if len(initial_page) <= limit:
+        return email_items, False, skipped_items
 
-    truncated = False
-    if len(email_items) >= limit and has_more_items:
-        try:
-            for extra in queryset[scanned:]:
-                if is_email_item(extra):
-                    truncated = True
-                    break
-        except Exception:
-            truncated = has_more_items
+    for item in queryset[scanned:]:
+        if scanned >= scan_limit:
+            # We deliberately stop pathological mixed-item folders. There may
+            # still be an email after the scan boundary, so advertise a
+            # truncated result rather than silently claiming completeness.
+            return email_items, True, skipped_items
+        scanned += 1
+        if is_email_item(item):
+            if len(email_items) == limit:
+                return email_items, True, skipped_items
+            email_items.append(item)
+        else:
+            skipped_items += 1
 
-    return email_items[:limit], truncated or not exhausted, skipped_items
+    return email_items, False, skipped_items
 
 
 def project_email_summary_fields(queryset, *, include_body_preview: bool):
@@ -293,13 +322,40 @@ def list_email_summaries(
 
 
 def find_message(account, message_id: str):
+    """Return an email item by EWS ID, regardless of its containing folder.
+
+    ``Account.fetch()`` maps to EWS ``GetItem`` and does not require knowing the
+    item's folder. Searching a fixed set of distinguished folders made IDs
+    returned by ``email list --folder <custom-folder>`` unusable with ``read``,
+    ``move``, ``reply``, and the other ID-based commands.
+
+    The folder scan remains as a compatibility fallback for lightweight test
+    doubles and alternate account-like clients that do not implement ``fetch``.
+    """
+    fetch = getattr(account, "fetch", None)
+    if callable(fetch):
+        try:
+            for item in fetch(ids=[message_id]):
+                if isinstance(item, Exception):
+                    if isinstance(item, NOT_FOUND_EXCEPTIONS):
+                        return None
+                    raise item
+                return item if item is not None and is_email_item(item) else None
+            return None
+        except NOT_FOUND_EXCEPTIONS:
+            return None
+        except (AttributeError, TypeError):
+            # Some account-like clients expose a non-compatible ``fetch``
+            # method. Preserve the original folder-based lookup for them.
+            pass
+
     folders = [account.inbox, account.sent, account.drafts, account.trash, account.junk]
     for folder in folders:
         try:
             item = folder.get(id=message_id)
             if item is not None and is_email_item(item):
                 return item
-        except (*NOT_FOUND_EXCEPTIONS, ResponseMessageError):
+        except NOT_FOUND_EXCEPTIONS:
             continue
     return None
 
@@ -322,9 +378,68 @@ def move_message(message, account, folder_name: str):
     return folder
 
 
-def delete_message(message, *, permanent: bool) -> str:
+def copy_message(message, account, folder_name: str):
+    folder = resolve_mail_folder(account, folder_name)
+    return folder, message.copy(folder)
+
+
+def archive_message(message, account, folder_name: str):
+    folder = resolve_archive_folder(account, folder_name)
+    return folder, message.archive(folder)
+
+
+def set_message_junk_state(message, *, is_junk: bool, move_item: bool) -> None:
+    message.mark_as_junk(is_junk=is_junk, move_item=move_item)
+
+
+def update_message(
+    message,
+    *,
+    values: dict[str, object],
+    draft_only_fields: set[str],
+    expected_changekey: str | None = None,
+    conflict_resolution: str = "AutoResolve",
+) -> list[str]:
+    """Update explicit EWS fields and preserve optimistic-concurrency intent."""
+    changed_fields = list(values)
+    if not changed_fields:
+        raise CliError("At least one update option is required.", code="INVALID_INPUT", exit_code=2)
+
+    if expected_changekey is not None and expected_changekey != getattr(message, "changekey", None):
+        raise CliError(
+            "Message changed since the supplied changekey was read.",
+            code="CONFLICT",
+            exit_code=1,
+            details={"expected_changekey": expected_changekey, "actual_changekey": getattr(message, "changekey", None)},
+        )
+
+    draft_only = sorted(set(changed_fields) & draft_only_fields)
+    if draft_only and not bool(getattr(message, "is_draft", False)):
+        raise CliError(
+            f"These fields can only be changed on a draft message: {', '.join(draft_only)}.",
+            code="INVALID_MESSAGE_STATE",
+            exit_code=2,
+            details={"fields": draft_only},
+        )
+
+    for field, value in values.items():
+        setattr(message, field, value)
+    message.save(update_fields=changed_fields, conflict_resolution=conflict_resolution)
+    return changed_fields
+
+
+def delete_message(message, *, permanent: bool, soft: bool = False) -> str:
+    if permanent and soft:
+        raise CliError(
+            "Choose either permanent deletion or soft deletion, not both.",
+            code="INVALID_INPUT",
+            exit_code=2,
+        )
     if permanent:
         message.delete()
-        return "deleted"
+        return "hard_deleted"
+    if soft:
+        message.soft_delete()
+        return "soft_deleted"
     message.move_to_trash()
     return "trashed"

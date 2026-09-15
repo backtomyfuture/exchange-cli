@@ -23,6 +23,23 @@ def _serialize_conversation_id(value):
     return _safe_str(getattr(value, "id", None))
 
 
+def _serialize_item_id(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return _safe_str(getattr(value, "id", None))
+
+
+def _serialize_headers(headers):
+    if not headers:
+        return {}
+    try:
+        return {str(name): _safe_str(value) or "" for name, value in headers.items()}
+    except AttributeError:
+        return {"raw": _safe_str(headers) or ""}
+
+
 def serialize_mailbox(mailbox):
     if mailbox is None:
         return None
@@ -36,12 +53,15 @@ def _serialize_mailbox_list(mailboxes):
 
 
 def serialize_attachment_summary(attachment):
+    attachment_id = getattr(attachment, "attachment_id", None)
     return {
+        "id": _serialize_item_id(attachment_id),
         "name": getattr(attachment, "name", None),
         "size": getattr(attachment, "size", None),
         "content_type": getattr(attachment, "content_type", None),
         "is_inline": bool(getattr(attachment, "is_inline", False)),
         "content_id": getattr(attachment, "content_id", None),
+        "type": type(attachment).__name__,
     }
 
 
@@ -53,6 +73,7 @@ def serialize_email_summary(message, include_body_preview: bool = True):
     body_preview = _safe_str(text_body)[:200] if include_body_preview and text_body else ""
     return {
         "id": getattr(message, "id", None),
+        "changekey": getattr(message, "changekey", None),
         "subject": getattr(message, "subject", "") or "",
         "sender": serialize_mailbox(sender),
         "to": _serialize_mailbox_list(to_recipients),
@@ -110,6 +131,18 @@ def serialize_email_detail(
 
     result["conversation_id"] = _serialize_conversation_id(getattr(message, "conversation_id", None))
     result["internet_message_id"] = _safe_str(getattr(message, "message_id", None))
+    result["parent_folder_id"] = _serialize_item_id(getattr(message, "parent_folder_id", None))
+    result["item_class"] = _safe_str(getattr(message, "item_class", None))
+    result["size"] = getattr(message, "size", None)
+    result["categories"] = list(getattr(message, "categories", None) or [])
+    result["sensitivity"] = _safe_str(getattr(message, "sensitivity", None))
+    result["is_draft"] = bool(getattr(message, "is_draft", False))
+    result["datetime_created"] = _safe_isoformat(getattr(message, "datetime_created", None))
+    result["last_modified_time"] = _safe_isoformat(getattr(message, "last_modified_time", None))
+    result["in_reply_to"] = _safe_str(getattr(message, "in_reply_to", None))
+    result["references"] = _safe_str(getattr(message, "references", None))
+    result["reply_to"] = _serialize_mailbox_list(getattr(message, "reply_to", None))
+    result["headers"] = _serialize_headers(getattr(message, "headers", None))
     result["bcc"] = _serialize_mailbox_list(getattr(message, "bcc_recipients", None))
     result["attachments"] = [serialize_attachment_summary(att) for att in (getattr(message, "attachments", None) or [])]
     if fields is None:

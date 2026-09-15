@@ -19,6 +19,7 @@ MAX_WATCH_EVENTS = 10000
 TASK_STATUSES = ("NotStarted", "InProgress", "Completed", "WaitingOnOthers", "Deferred")
 EMAIL_DETAIL_FIELD_CHOICES = (
     "id",
+    "changekey",
     "subject",
     "sender",
     "to",
@@ -38,6 +39,18 @@ EMAIL_DETAIL_FIELD_CHOICES = (
     "unique_body_html",
     "conversation_id",
     "internet_message_id",
+    "parent_folder_id",
+    "item_class",
+    "size",
+    "categories",
+    "sensitivity",
+    "is_draft",
+    "datetime_created",
+    "last_modified_time",
+    "in_reply_to",
+    "references",
+    "reply_to",
+    "headers",
     "attachments",
 )
 MEETING_NOTIFY_CHOICES = ("none", "all")

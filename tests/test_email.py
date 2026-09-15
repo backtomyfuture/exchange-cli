@@ -19,6 +19,8 @@ def _mock_message(message_id="AAMk123", subject="Test", is_read=True):
     message.id = message_id
     message.changekey = "CK1"
     message.subject = subject
+    message.item_class = "IPM.Note"
+    message.parent_folder_id = None
     message.sender = MagicMock(name="Sender", email_address="sender@x.com")
     message.sender.name = "Sender"
     message.to_recipients = [MagicMock(name="To", email_address="to@x.com")]
@@ -28,13 +30,22 @@ def _mock_message(message_id="AAMk123", subject="Test", is_read=True):
     message.datetime_received = datetime(2024, 7, 15, 10, 30, tzinfo=timezone.utc)
     message.datetime_sent = datetime(2024, 7, 15, 10, 29, tzinfo=timezone.utc)
     message.is_read = is_read
+    message.is_draft = False
     message.has_attachments = False
     message.importance = "Normal"
+    message.sensitivity = "Normal"
+    message.categories = []
     message.text_body = "Preview"
     message.body = "<p>Full body</p>"
     message.unique_body = None
     message.conversation_id = None
     message.message_id = None
+    message.datetime_created = datetime(2024, 7, 15, 10, 0, tzinfo=timezone.utc)
+    message.last_modified_time = datetime(2024, 7, 15, 10, 30, tzinfo=timezone.utc)
+    message.in_reply_to = None
+    message.references = None
+    message.reply_to = []
+    message.headers = {}
     message.attachments = []
     return message
 
@@ -114,9 +125,37 @@ class TestEmailList:
         assert json.loads(result.output)["code"] == "INVALID_INPUT"
         get_connection.assert_not_called()
 
+    def test_list_reports_transport_failure_instead_of_empty_success(self, runner, mock_conn):
+        items_mock = mock_conn.inbox.all.return_value.only.return_value.order_by.return_value
+        items_mock.__getitem__.side_effect = TransportError("offline")
+
+        result = runner.invoke(cli, ["email", "list"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["ok"] is False
+        assert payload["code"] == "CONNECTION_ERROR"
+
 
 class TestEmailRead:
+    def test_find_message_uses_global_fetch_for_custom_folder_items(self, mock_conn):
+        message = _mock_message("CUSTOM_FOLDER_MESSAGE")
+        mock_conn.fetch.return_value = iter([message])
+
+        assert _find_message(mock_conn, "CUSTOM_FOLDER_MESSAGE") is message
+        mock_conn.fetch.assert_called_once_with(ids=["CUSTOM_FOLDER_MESSAGE"])
+        mock_conn.inbox.get.assert_not_called()
+
+    def test_find_message_global_fetch_not_found_does_not_scan_standard_folders(self, mock_conn):
+        from exchangelib.errors import ErrorItemNotFound
+
+        mock_conn.fetch.return_value = iter([ErrorItemNotFound("missing")])
+
+        assert _find_message(mock_conn, "MISSING") is None
+        mock_conn.inbox.get.assert_not_called()
+
     def test_find_message_skips_only_not_found(self, mock_conn):
+        mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
         mock_conn.inbox.get.side_effect = DoesNotExist("missing")
         message = _mock_message()
         mock_conn.sent.get.return_value = message
@@ -124,14 +163,24 @@ class TestEmailRead:
         assert _find_message(mock_conn, "AAMk123") is message
 
     def test_find_message_preserves_transport_error(self, mock_conn):
+        mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
         mock_conn.inbox.get.side_effect = TransportError("offline")
 
         with pytest.raises(TransportError):
             _find_message(mock_conn, "AAMk123")
 
+    def test_find_message_preserves_access_denied_error(self, mock_conn):
+        from exchangelib.errors import ErrorAccessDenied
+
+        mock_conn.fetch.return_value = iter([ErrorAccessDenied("denied")])
+
+        with pytest.raises(ErrorAccessDenied):
+            _find_message(mock_conn, "AAMk123")
+
     def test_find_message_skips_invalid_id_malformed(self, mock_conn):
         from exchangelib.errors import ErrorInvalidIdMalformed
 
+        mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
         mock_conn.inbox.get.side_effect = ErrorInvalidIdMalformed("malformed id")
         message = _mock_message()
         mock_conn.sent.get.return_value = message
@@ -141,6 +190,7 @@ class TestEmailRead:
     def test_read_message_not_found_on_fake_id(self, runner, mock_conn):
         from exchangelib.errors import ErrorInvalidIdMalformed
 
+        mock_conn.fetch.return_value = iter([ErrorInvalidIdMalformed("malformed id")])
         mock_conn.inbox.get.side_effect = ErrorInvalidIdMalformed("malformed id")
         mock_conn.sent.get.side_effect = ErrorInvalidIdMalformed("malformed id")
         mock_conn.drafts.get.side_effect = ErrorInvalidIdMalformed("malformed id")
@@ -191,6 +241,9 @@ class TestEmailRead:
         assert "unique_body_html" not in data
         assert data["conversation_id"] == "AAQkAGconversation"
         assert data["internet_message_id"] == "<reply-42@example.com>"
+        assert data["changekey"] == "CK1"
+        assert data["is_draft"] is False
+        assert data["headers"] == {}
 
     def test_read_with_include_html(self, runner, mock_conn):
         message = _mock_message()
@@ -487,8 +540,90 @@ class TestEmailSend:
         assert data["data"]["to"] == ["colleague@x.com"]
         forward_item.save.assert_called_once_with(folder=mock_conn.drafts)
 
+    def test_reply_draft_sanitizes_body_by_default(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        reply_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_REPLY_CLEAN"
+        reply_item.save.return_value = saved_item
+        message.create_reply.return_value = reply_item
+
+        draft_msg = MagicMock()
+        draft_msg.body = HTMLBody('<meta name="ProgId" content="Word.Document"><p>Quoted text<o:p></o:p></p>')
+        mock_conn.drafts.get.return_value = draft_msg
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "reply", "M1", "--body", "Draft content", "--draft"],
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["id"] == "DRAFT_REPLY_CLEAN"
+        assert data["data"]["sanitized"] is True
+        assert "word_meta" in data["data"]["sanitized_rules"]
+        mock_conn.drafts.get.assert_called_once_with(id="DRAFT_REPLY_CLEAN")
+        draft_msg.save.assert_called_once_with(update_fields=["body"])
+        assert "ProgId" not in str(draft_msg.body)
+        assert "<o:p>" not in str(draft_msg.body)
+
+    def test_reply_draft_with_no_sanitize(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        reply_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_REPLY_RAW"
+        reply_item.save.return_value = saved_item
+        message.create_reply.return_value = reply_item
+
+        draft_msg = MagicMock()
+        mock_conn.drafts.get.return_value = draft_msg
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "reply", "M1", "--body", "Draft content", "--draft", "--no-sanitize"],
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["sanitized"] is False
+        mock_conn.drafts.get.assert_not_called()
+        draft_msg.save.assert_not_called()
+
+    def test_forward_draft_sanitizes_body_by_default(self, runner, mock_conn):
+        message = _mock_message("M1", "Original Subject")
+        forward_item = MagicMock()
+        saved_item = MagicMock()
+        saved_item.id = "DRAFT_FWD_CLEAN"
+        forward_item.save.return_value = saved_item
+        message.create_forward.return_value = forward_item
+
+        draft_msg = MagicMock()
+        draft_msg.body = HTMLBody('<link rel="Edit-Time-Data" href="cid:editdata.mso"><p>Quoted<o:p></o:p></p>')
+        mock_conn.drafts.get.return_value = draft_msg
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "forward", "M1", "--to", "colleague@x.com", "--draft"],
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        assert data["data"]["id"] == "DRAFT_FWD_CLEAN"
+        assert data["data"]["sanitized"] is True
+        assert "word_links" in data["data"]["sanitized_rules"]
+        mock_conn.drafts.get.assert_called_once_with(id="DRAFT_FWD_CLEAN")
+        draft_msg.save.assert_called_once_with(update_fields=["body"])
+        assert "Edit-Time-Data" not in str(draft_msg.body)
+
     def test_mark_read(self, runner, mock_conn):
         message = _mock_message()
+        mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
         mock_conn.inbox.get.return_value = message
         result = runner.invoke(cli, ["email", "mark-read", "AAMk123"])
         assert result.exit_code == 0
@@ -497,6 +632,7 @@ class TestEmailSend:
 
     def test_move(self, runner, mock_conn):
         message = _mock_message()
+        mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
         mock_conn.inbox.get.return_value = message
         mock_conn.trash.name = "Deleted Items"
         result = runner.invoke(cli, ["email", "move", "AAMk123", "--folder", "trash"])
@@ -505,6 +641,7 @@ class TestEmailSend:
 
     def test_delete_moves_to_trash_by_default(self, runner, mock_conn):
         message = _mock_message()
+        mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
         mock_conn.inbox.get.return_value = message
         result = runner.invoke(cli, ["email", "delete", "AAMk123", "--confirm"])
         assert result.exit_code == 0
@@ -512,6 +649,26 @@ class TestEmailSend:
         assert payload["data"]["permanent"] is False
         message.move_to_trash.assert_called_once()
         message.delete.assert_not_called()
+
+    def test_delete_soft_deletes_to_recoverable_items(self, runner, mock_conn):
+        message = _mock_message()
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "delete", "AAMk123", "--soft", "--confirm"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"]["soft"] is True
+        assert payload["data"]["action"] == "soft_deleted"
+        message.soft_delete.assert_called_once()
+        message.move_to_trash.assert_not_called()
+
+    def test_delete_rejects_two_delete_modes_before_connection(self, runner):
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(cli, ["email", "delete", "AAMk123", "--soft", "--permanent", "--confirm"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "INVALID_INPUT"
+        get_connection.assert_not_called()
 
     def test_delete_requires_confirmation_before_connection(self, runner):
         with patch("exchange_cli.commands.email.get_connection") as get_connection:
@@ -529,6 +686,225 @@ class TestEmailSend:
         data = json.loads(result.output)["data"]
         assert set(data) == {"id", "subject", "body"}
         assert "body_html" not in data
+
+
+class TestEmailUpdate:
+    def test_update_draft_replaces_compose_fields_and_uses_changekey_guard(self, runner, mock_conn):
+        message = _mock_message("DRAFT1")
+        message.is_draft = True
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "update",
+                    "DRAFT1",
+                    "--subject",
+                    "Updated subject",
+                    "--body",
+                    "<p>Updated body</p>",
+                    "--body-type",
+                    "html",
+                    "--to",
+                    "recipient@example.com",
+                    "--reply-to",
+                    "reply@example.com",
+                    "--category",
+                    "Finance",
+                    "--category",
+                    "FY26",
+                    "--importance",
+                    "high",
+                    "--sensitivity",
+                    "confidential",
+                    "--read-receipt",
+                    "--delivery-receipt",
+                    "--response-requested",
+                    "--if-changekey",
+                    "CK1",
+                ],
+            )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"]["updated_fields"] == [
+            "subject",
+            "body",
+            "to_recipients",
+            "reply_to",
+            "categories",
+            "importance",
+            "sensitivity",
+            "is_read_receipt_requested",
+            "is_delivery_receipt_requested",
+            "is_response_requested",
+        ]
+        assert message.subject == "Updated subject"
+        assert isinstance(message.body, HTMLBody)
+        assert message.to_recipients[0].email_address == "recipient@example.com"
+        assert message.reply_to[0].email_address == "reply@example.com"
+        assert message.categories == ["Finance", "FY26"]
+        assert message.importance == "High"
+        assert message.sensitivity == "Confidential"
+        message.save.assert_called_once_with(
+            update_fields=payload["data"]["updated_fields"],
+            conflict_resolution="NeverOverwrite",
+        )
+
+    def test_update_rejects_draft_only_fields_on_non_draft(self, runner, mock_conn):
+        message = _mock_message("M1")
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "update", "M1", "--to", "recipient@example.com"])
+
+        assert result.exit_code == 2
+        payload = json.loads(result.output)
+        assert payload["code"] == "INVALID_MESSAGE_STATE"
+        message.save.assert_not_called()
+
+    def test_update_rejects_stale_changekey_without_saving(self, runner, mock_conn):
+        message = _mock_message("M1")
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "update", "M1", "--subject", "New", "--if-changekey", "OLD"])
+
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["code"] == "CONFLICT"
+        assert payload["details"] == {"expected_changekey": "OLD", "actual_changekey": "CK1"}
+        message.save.assert_not_called()
+
+    def test_draft_update_alias_requires_a_draft(self, runner, mock_conn):
+        message = _mock_message("M1")
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["draft", "update", "M1", "--subject", "New"])
+
+        assert result.exit_code == 1
+        assert json.loads(result.output)["code"] == "NOT_FOUND"
+        message.save.assert_not_called()
+
+    def test_update_dry_run_does_not_connect(self, runner):
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(
+                cli,
+                ["email", "update", "M1", "--clear-categories", "--read", "--dry-run"],
+            )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["data"]["action"] == "email.update"
+        assert payload["data"]["preview"]["updated_fields"] == ["categories", "is_read"]
+        get_connection.assert_not_called()
+
+    def test_update_draft_sanitizes_html_body(self, runner, mock_conn):
+        message = _mock_message("DRAFT1")
+        message.is_draft = True
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "update",
+                    "DRAFT1",
+                    "--body",
+                    '<meta name="ProgId" content="Word.Document"><p>Updated<o:p></o:p></p>',
+                    "--body-type",
+                    "html",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert isinstance(message.body, HTMLBody)
+        cleaned_body = str(message.body)
+        assert "ProgId" not in cleaned_body
+        assert "<o:p>" not in cleaned_body
+        assert "<p>Updated</p>" in cleaned_body
+
+    def test_update_draft_no_sanitize_preserves_html(self, runner, mock_conn):
+        message = _mock_message("DRAFT1")
+        message.is_draft = True
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "update",
+                    "DRAFT1",
+                    "--body",
+                    '<meta name="ProgId" content="Word.Document"><p>Updated</p>',
+                    "--body-type",
+                    "html",
+                    "--no-sanitize",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert isinstance(message.body, HTMLBody)
+        assert "ProgId" in str(message.body)
+
+
+class TestEmailLifecycleOperations:
+    def test_copy_uses_the_requested_primary_folder(self, runner, mock_conn):
+        message = _mock_message("M1")
+        mock_conn.sent.name = "Sent Items"
+        message.copy.return_value = ("COPY1", "COPYCK1")
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "copy", "M1", "--folder", "sent"])
+
+        assert result.exit_code == 0
+        message.copy.assert_called_once_with(mock_conn.sent)
+        payload = json.loads(result.output)
+        assert payload["data"]["copied_item"] == {"id": "COPY1", "changekey": "COPYCK1"}
+
+    def test_archive_targets_the_online_archive_inbox(self, runner, mock_conn):
+        message = _mock_message("M1")
+        mock_conn.archive_inbox.name = "Archive Inbox"
+        message.archive.return_value = True
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "archive", "M1"])
+
+        assert result.exit_code == 0
+        message.archive.assert_called_once_with(mock_conn.archive_inbox)
+        assert json.loads(result.output)["data"]["folder"] == "Archive Inbox"
+
+    def test_mark_junk_requires_confirmation_before_connection(self, runner):
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(cli, ["email", "mark-junk", "M1"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
+
+    def test_mark_not_junk_uses_upstream_unblock_operation(self, runner, mock_conn):
+        message = _mock_message("M1")
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "mark-not-junk", "M1", "--no-move", "--confirm"])
+
+        assert result.exit_code == 0
+        message.mark_as_junk.assert_called_once_with(is_junk=False, move_item=False)
+        payload = json.loads(result.output)
+        assert payload["data"]["is_junk"] is False
+        assert payload["data"]["moved"] is False
+
+    def test_restore_reports_the_item_identity_after_move(self, runner, mock_conn):
+        message = _mock_message("OLD")
+        mock_conn.inbox.name = "Inbox"
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "restore", "OLD"])
+
+        assert result.exit_code == 0
+        message.move.assert_called_once_with(mock_conn.inbox)
+        payload = json.loads(result.output)
+        assert payload["data"]["source_id"] == "OLD"
+        assert payload["data"]["id"] == "OLD"
 
 
 class TestEmailSearch:
