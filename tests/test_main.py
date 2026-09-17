@@ -83,7 +83,12 @@ def test_schema_lists_commands(runner):
     names = {item["name"] for item in payload["data"]["commands"]}
     assert "email.send" in names
     assert "contact.resolve" in names
-    assert payload["data"]["schema_version"] == 2
+    assert "mailbox.oof.set" in names
+    assert "mailbox.rules.create" in names
+    assert "folder.empty" in names
+    assert "draft.attach" in names
+    assert "draft.detach" in names
+    assert payload["data"]["schema_version"] == 3
 
 
 def test_schema_single_command(runner):
@@ -141,6 +146,40 @@ def test_schema_config_init_semantics(runner):
     assert data["effect"] == "internal_modify"
 
 
+def test_schema_recursively_exposes_oof_command_contract(runner):
+    result = runner.invoke(cli, ["schema", "mailbox.oof.set"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)["data"]
+    assert data["write"] is True
+    assert data["effect"] == "external_send"
+    assert data["confirm"] is True
+    assert "--internal-reply" in {option["name"] for option in data["options"]}
+
+
+def test_schema_exposes_rule_and_folder_mutation_semantics(runner):
+    rule = runner.invoke(cli, ["schema", "mailbox.rules.create"])
+    assert rule.exit_code == 0
+    rule_data = json.loads(rule.output)["data"]
+    assert rule_data["write"] is True
+    assert rule_data["effect"] == "conditional"
+    assert rule_data["confirm"] is True
+    assert "--spec-file" in {option["name"] for option in rule_data["options"]}
+
+    empty = runner.invoke(cli, ["schema", "folder.empty"])
+    assert empty.exit_code == 0
+    empty_data = json.loads(empty.output)["data"]
+    assert empty_data["write"] is True
+    assert empty_data["confirmation"] == "required"
+
+    junk = runner.invoke(cli, ["schema", "email.mark-junk"])
+    assert junk.exit_code == 0
+    junk_data = json.loads(junk.output)["data"]
+    assert junk_data["confirm"] is True
+    assert junk_data["confirmation"] == "required"
+    assert "--confirm" in {option["name"] for option in junk_data["options"]}
+
+
 def test_format_text_honored_on_cli_error(runner):
     result = runner.invoke(cli, ["--format", "text", "email", "send"])
 
@@ -192,4 +231,3 @@ def test_explicit_request_id_in_schema_success(runner):
     data = json.loads(result.stdout)
     assert data["meta"]["request_id"] == "req-schema-456"
     assert "elapsed_ms" in data["meta"]
-

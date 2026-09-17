@@ -50,6 +50,8 @@ class OutputFormatter:
         truncated: bool | None = None,
         skipped_items: int | None = None,
         from_resolved: bool | None = None,
+        offset: int | None = None,
+        next_offset: int | None = None,
         file=None,
     ):
         handle = file or sys.stdout
@@ -63,6 +65,10 @@ class OutputFormatter:
                 payload["skipped_items"] = skipped_items
             if from_resolved is not None:
                 payload["from_resolved"] = from_resolved
+            if offset is not None:
+                payload["offset"] = offset
+            if next_offset is not None:
+                payload["next_offset"] = next_offset
             if self.request_id:
                 meta: dict[str, Any] = {"request_id": self.request_id}
                 if self.start_time is not None:

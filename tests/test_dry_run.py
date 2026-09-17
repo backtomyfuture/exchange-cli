@@ -195,6 +195,19 @@ def test_dry_run_draft_delete(runner):
     assert data["data"]["preview"]["requires_confirm"] is True
 
 
+def test_dry_run_draft_detach(runner):
+    result = runner.invoke(
+        cli,
+        ["draft", "detach", "draft-777", "--attachment-id", "ATT-1", "--dry-run"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["ok"] is True
+    assert data["data"]["action"] == "draft.detach"
+    assert data["data"]["preview"]["attachment_ids"] == ["ATT-1"]
+    assert data["data"]["preview"]["requires_confirm"] is False
+
+
 def test_dry_run_task_delete(runner):
     result = runner.invoke(
         cli,

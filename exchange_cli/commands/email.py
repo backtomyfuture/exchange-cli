@@ -20,6 +20,7 @@ from ..core.email_service import (
     project_email_summary_fields,
     require_message,
     resolve_mail_folder,
+    respond_to_meeting_request,
     scan_email_page,
     set_message_junk_state,
     set_message_read_state,
@@ -27,7 +28,7 @@ from ..core.email_service import (
 )
 from ..core.errors import CliError, classify_exception, classify_write_exception
 from ..core.html_sanitizer import sanitize_draft_html
-from ..core.io import resolve_body
+from ..core.io import read_binary_file, resolve_body, write_new_binary_file
 from ..core.output import OutputFormatter
 from ..core.serializers import serialize_email_detail, serialize_email_summary
 from ..core.validation import (
@@ -216,6 +217,19 @@ def _serialize_copy_result(value):
     return {"id": getattr(value, "id", None), "changekey": getattr(value, "changekey", None)}
 
 
+def _require_single_operation_result(results, *, action: str):
+    result_list = list(results)
+    if len(result_list) != 1:
+        raise CliError(
+            f"Exchange returned {len(result_list)} results for {action}; expected one.",
+            code="SERVER_ERROR",
+        )
+    result = result_list[0]
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
 @click.group("email")
 @click.pass_context
 def email(ctx):
@@ -230,6 +244,7 @@ def email(ctx):
     help="Well-known name, folder path, or folder id",
 )
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Number of messages to return")
+@click.option("--offset", default=0, type=click.IntRange(0), help="EWS item offset for the next page")
 @click.option("--unread", is_flag=True, default=False, help="Only unread messages")
 @click.option(
     "--with-preview",
@@ -238,20 +253,28 @@ def email(ctx):
     help="Include body_preview (slower for large result sets)",
 )
 @click.pass_context
-def email_list(ctx, folder_name, limit, unread, with_preview):
+def email_list(ctx, folder_name, limit, offset, unread, with_preview):
     """List messages from a well-known folder, path, or folder id."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     folder_name = _require_folder_arg(folder_name)
     try:
         account = get_connection(ctx)
-        results, truncated, skipped_items = list_email_summaries(
+        results, truncated, skipped_items, next_offset = list_email_summaries(
             account,
             folder_name=folder_name,
             limit=limit,
+            offset=offset,
             unread=unread,
             with_preview=with_preview,
         )
-        formatter.success(results, count=len(results), truncated=truncated, skipped_items=skipped_items)
+        formatter.success(
+            results,
+            count=len(results),
+            truncated=truncated,
+            skipped_items=skipped_items,
+            offset=offset,
+            next_offset=next_offset,
+        )
     except Exception as exc:
         raise classify_exception(exc) from exc
 
@@ -310,6 +333,193 @@ def email_read(ctx, message_id, save_dir, body_format, include_html, max_body_le
         formatter.success(result)
     except Exception as exc:
         raise classify_exception(exc) from exc
+
+
+@email.command("export")
+@click.argument("message_id")
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="New file to receive the opaque EWS export payload",
+)
+@click.pass_context
+def email_export(ctx, message_id, output_path):
+    """Export one item in exchangelib's EWS ExportItems format, not RFC MIME."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    try:
+        account = get_connection(ctx)
+        message = require_message(account, message_id)
+        export_data = _require_single_operation_result(account.export([message]), action="email.export")
+        if isinstance(export_data, str):
+            encoded_data = export_data.encode("utf-8")
+        elif isinstance(export_data, bytes):
+            encoded_data = export_data
+        else:
+            raise CliError("Exchange returned an invalid EWS export payload.", code="SERVER_ERROR")
+        saved_path = write_new_binary_file(output_path, encoded_data)
+        formatter.success(
+            {
+                "message": "Email exported",
+                "id": message_id,
+                "path": str(saved_path),
+                "bytes": len(encoded_data),
+                "format": "ews-export",
+            }
+        )
+    except Exception as exc:
+        raise classify_exception(exc) from exc
+
+
+@email.command("import")
+@click.option(
+    "--input",
+    "input_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="An EWS payload previously written by email export",
+)
+@click.option("--folder", "folder_name", required=True, help="Destination well-known name, path, or folder id")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate the local export file without importing it")
+@click.option("--confirm", is_flag=True, help="Confirm creating the imported item")
+@click.pass_context
+def email_import(ctx, input_path, folder_name, dry_run, confirm):
+    """Import one exchangelib EWS ExportItems payload into a primary folder."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    folder_name = _require_folder_arg(folder_name)
+    export_data = read_binary_file(input_path)
+    if not export_data:
+        raise CliError("EWS export file is empty.", code="INVALID_INPUT", exit_code=2)
+    try:
+        export_text = export_data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CliError("Input is not a UTF-8 EWS export payload.", code="INVALID_INPUT", exit_code=2) from exc
+
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.import",
+                "preview": {
+                    "path": str(input_path),
+                    "bytes": len(export_data),
+                    "folder": folder_name,
+                    "format": "ews-export",
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
+    require_confirmation(confirm, action="email.import")
+    try:
+        account = get_connection(ctx)
+        folder = resolve_mail_folder(account, folder_name)
+        imported = _require_single_operation_result(account.upload([(folder, export_text)]), action="email.import")
+        formatter.success(
+            {
+                "message": "Email imported",
+                "path": str(input_path),
+                "folder": getattr(folder, "name", folder_name),
+                "imported_item": _serialize_copy_result(imported),
+                "format": "ews-export",
+                "outcome": "succeeded",
+            }
+        )
+    except Exception as exc:
+        raise classify_write_exception(exc) from exc
+
+
+@email.command("export-mime")
+@click.argument("message_id")
+@click.option(
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="New .eml-compatible file to receive the raw MIME content",
+)
+@click.pass_context
+def email_export_mime(ctx, message_id, output_path):
+    """Save the raw EWS MIME content of one message as a new local file."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    try:
+        account = get_connection(ctx)
+        message = require_message(account, message_id)
+        mime_content = getattr(message, "mime_content", None)
+        if not isinstance(mime_content, (bytes, bytearray)) or not mime_content:
+            raise CliError(
+                "This item does not have retrievable MIME content.",
+                code="MIME_CONTENT_UNAVAILABLE",
+            )
+        saved_path = write_new_binary_file(output_path, bytes(mime_content))
+        formatter.success(
+            {
+                "message": "MIME content exported",
+                "id": message_id,
+                "path": str(saved_path),
+                "bytes": len(mime_content),
+                "format": "rfc822",
+            }
+        )
+    except Exception as exc:
+        raise classify_exception(exc) from exc
+
+
+@email.command("import-mime")
+@click.option(
+    "--input",
+    "input_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="An RFC 822 / .eml file to upload through EWS MimeContent",
+)
+@click.option("--folder", "folder_name", required=True, help="Destination well-known name, path, or folder id")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate the local MIME file without importing it")
+@click.option("--confirm", is_flag=True, help="Confirm creating the imported message")
+@click.pass_context
+def email_import_mime(ctx, input_path, folder_name, dry_run, confirm):
+    """Create a message from raw RFC MIME content in a primary mailbox folder."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    folder_name = _require_folder_arg(folder_name)
+    mime_content = read_binary_file(input_path)
+    if not mime_content:
+        raise CliError("MIME file is empty.", code="INVALID_INPUT", exit_code=2)
+
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.import-mime",
+                "preview": {
+                    "path": str(input_path),
+                    "bytes": len(mime_content),
+                    "folder": folder_name,
+                    "format": "rfc822",
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
+    require_confirmation(confirm, action="email.import-mime")
+    try:
+        account = get_connection(ctx)
+        folder = resolve_mail_folder(account, folder_name)
+        message = Message(account=account, folder=folder, mime_content=mime_content)
+        message.save()
+        formatter.success(
+            {
+                "message": "MIME message imported",
+                "path": str(input_path),
+                "folder": getattr(folder, "name", folder_name),
+                "id": getattr(message, "id", None),
+                "changekey": getattr(message, "changekey", None),
+                "format": "rfc822",
+                "outcome": "succeeded",
+            }
+        )
+    except Exception as exc:
+        raise classify_write_exception(exc) from exc
 
 
 @email.command("send")
@@ -389,6 +599,12 @@ def email_send(
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     body = resolve_body(body, body_file)
     parsed_inline = [parse_inline_attachment(item) for item in inline_attachments]
+    if sent_folder is not None and not save_copy:
+        raise CliError(
+            "--sent-folder requires --save-copy.",
+            code="INVALID_INPUT",
+            exit_code=2,
+        )
     if dry_run:
         attachment_previews = [{"name": p.name, "size": p.stat().st_size if p.is_file() else None} for p in attachments]
         inline_attachment_previews = [
@@ -423,12 +639,6 @@ def email_send(
             }
         )
         return
-    if sent_folder is not None and not save_copy:
-        raise CliError(
-            "--sent-folder requires --save-copy.",
-            code="INVALID_INPUT",
-            exit_code=2,
-        )
     require_confirmation(confirm, action="email.send")
 
     try:
@@ -719,6 +929,101 @@ def email_forward(
         raise classify_write_exception(exc) from exc
 
 
+@email.command("respond-meeting")
+@click.argument("message_id")
+@click.option(
+    "--response",
+    type=click.Choice(["accept", "tentative", "decline"]),
+    required=True,
+    help="Meeting response",
+)
+@click.option("--body", default=None, help="Optional response message")
+@click.option(
+    "--body-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="Read the optional response message from a file",
+)
+@click.option("--body-type", default="text", type=click.Choice(["text", "html"]), help="Response body type")
+@click.option("--propose-start", default=None, help="Proposed start (RFC 3339 or YYYY-MM-DD HH:MM)")
+@click.option("--propose-end", default=None, help="Proposed end (RFC 3339 or YYYY-MM-DD HH:MM)")
+@click.option("--save-copy/--no-save-copy", default=True, help="Save the sent response in Sent Items")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate the meeting response without sending it")
+@click.option("--confirm", is_flag=True, help="Confirm sending the meeting response")
+@click.pass_context
+def email_respond_meeting(
+    ctx,
+    message_id,
+    response,
+    body,
+    body_file,
+    body_type,
+    propose_start,
+    propose_end,
+    save_copy,
+    dry_run,
+    confirm,
+):
+    """Accept, tentatively accept, or decline an EWS meeting request."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    response_body = resolve_body(body, body_file, required=False)
+    proposed_start = _parse_search_date(propose_start, is_end=False) if propose_start else None
+    proposed_end = _parse_search_date(propose_end, is_end=True) if propose_end else None
+    if (proposed_start is None) != (proposed_end is None):
+        raise CliError(
+            "--propose-start and --propose-end must be used together.",
+            code="INVALID_INPUT",
+            exit_code=2,
+        )
+    if proposed_start and proposed_end:
+        ensure_start_before_end(proposed_start, proposed_end, action="email.respond-meeting")
+
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "email.respond-meeting",
+                "preview": {
+                    "message_id": message_id,
+                    "response": response,
+                    "body_type": body_type,
+                    "body_length": len(response_body or ""),
+                    "proposed_start": proposed_start.isoformat() if proposed_start else None,
+                    "proposed_end": proposed_end.isoformat() if proposed_end else None,
+                    "save_copy": save_copy,
+                    "requires_confirm": True,
+                },
+            }
+        )
+        return
+    require_confirmation(confirm, action="email.respond-meeting")
+    try:
+        account = get_connection(ctx)
+        message = require_message(account, message_id)
+        typed_body = HTMLBody(response_body) if body_type == "html" and response_body is not None else response_body
+        respond_to_meeting_request(
+            message,
+            response=response,
+            body=typed_body,
+            proposed_start=proposed_start,
+            proposed_end=proposed_end,
+            save_copy=save_copy,
+        )
+        formatter.success(
+            {
+                "message": "Meeting response sent",
+                "id": message_id,
+                "response": response,
+                "save_copy": save_copy,
+                "proposed_start": proposed_start.isoformat() if proposed_start else None,
+                "proposed_end": proposed_end.isoformat() if proposed_end else None,
+                "outcome": "succeeded",
+            }
+        )
+    except Exception as exc:
+        raise classify_write_exception(exc) from exc
+
+
 @email.command("search")
 @click.argument("query")
 @click.option(
@@ -728,6 +1033,7 @@ def email_forward(
     help="Well-known name, folder path, or folder id",
 )
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Max results")
+@click.option("--offset", default=0, type=click.IntRange(0), help="EWS item offset for the next page")
 @click.option("--start", default=None, help="Start date/time (YYYY-MM-DD or RFC 3339)")
 @click.option("--end", default=None, help="End date/time (YYYY-MM-DD or RFC 3339)")
 @click.option("--from", "from_addr", default=None, help="Filter by sender (name or email; resolved via directory)")
@@ -739,7 +1045,7 @@ def email_forward(
     help="Include body_preview (slower for large result sets)",
 )
 @click.pass_context
-def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_attachments, with_preview):
+def email_search(ctx, query, folder_name, limit, offset, start, end, from_addr, has_attachments, with_preview):
     """Search messages with server-side filters."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
@@ -793,7 +1099,9 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
             criteria &= Q(has_attachments=True)
         queryset = folder.filter(criteria)
         projected = project_email_summary_fields(queryset, include_body_preview=with_preview)
-        page, truncated, skipped_items = scan_email_page(projected.order_by("-datetime_received"), limit)
+        page, truncated, skipped_items, next_offset = scan_email_page(
+            projected.order_by("-datetime_received"), limit, offset=offset
+        )
         results = [serialize_email_summary(item, include_body_preview=with_preview) for item in page]
         formatter.success(
             results,
@@ -801,6 +1109,8 @@ def email_search(ctx, query, folder_name, limit, start, end, from_addr, has_atta
             truncated=truncated,
             skipped_items=skipped_items,
             from_resolved=from_resolved,
+            offset=offset,
+            next_offset=next_offset,
         )
     except Exception as exc:
         raise classify_exception(exc) from exc

@@ -15,6 +15,19 @@ def take_page(queryset, limit: int) -> tuple[list[Any], bool]:
     return page[:limit], len(page) > limit
 
 
+def take_page_at_offset(queryset, *, limit: int, offset: int = 0) -> tuple[list[Any], bool, int | None]:
+    """Return one offset-based page without loading earlier results.
+
+    The returned offset is only an EWS absolute item offset. It is useful for
+    bounded listings, but cannot be a stable snapshot when the source folder is
+    modified between requests.
+    """
+
+    page = list(queryset[offset : offset + limit + 1])
+    truncated = len(page) > limit
+    return page[:limit], truncated, offset + limit if truncated else None
+
+
 def scan_matching(
     items: Iterable[Any],
     *,

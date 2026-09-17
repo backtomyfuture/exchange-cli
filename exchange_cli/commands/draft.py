@@ -1,36 +1,32 @@
-"""exchange-cli draft {list, create, update, send, delete}."""
+"""exchange-cli draft {list, create, update, attach, detach, send, delete}."""
 
 from pathlib import Path
 
 import click
-from exchangelib import FileAttachment, HTMLBody, Mailbox, Message
+from exchangelib import HTMLBody, Mailbox, Message
 from exchangelib.errors import ErrorItemNotFound
 
 from ..core.cli import get_account
-from ..core.email_service import resolve_mail_folder
+from ..core.email_service import (
+    attach_file_attachments,
+    detach_message_attachments,
+    require_draft,
+    require_matching_changekey,
+    resolve_mail_folder,
+    select_message_attachments,
+)
 from ..core.errors import CliError, classify_exception, classify_write_exception
 from ..core.html_sanitizer import sanitize_draft_html
 from ..core.io import resolve_body
 from ..core.output import OutputFormatter
-from ..core.query import take_page
-from ..core.serializers import serialize_email_summary
+from ..core.query import take_page_at_offset
+from ..core.serializers import serialize_attachment_summary, serialize_email_summary
 from ..core.validation import MAX_RESULTS, parse_inline_attachment, require_confirmation
 from .email import IMPORTANCE_VALUES, SENSITIVITY_VALUES, _mailboxes, email_update
 
 
 def get_connection(ctx):
     return get_account(ctx)
-
-
-def _attach_files(message, attachments, inline_attachments=None) -> None:
-    for path in attachments or []:
-        with open(path, "rb") as handle:
-            content = handle.read()
-        message.attach(FileAttachment(name=path.name, content=content))
-    for path, cid in inline_attachments or []:
-        with open(path, "rb") as handle:
-            content = handle.read()
-        message.attach(FileAttachment(name=path.name, content=content, is_inline=True, content_id=cid))
 
 
 @click.group("draft")
@@ -41,15 +37,18 @@ def draft(ctx):
 
 @draft.command("list")
 @click.option("--limit", default=20, type=click.IntRange(1, MAX_RESULTS), help="Number of drafts to return")
+@click.option("--offset", default=0, type=click.IntRange(0), help="EWS item offset for the next page")
 @click.pass_context
-def draft_list(ctx, limit):
+def draft_list(ctx, limit, offset):
     """List draft messages."""
     formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
     try:
         account = get_connection(ctx)
-        page, truncated = take_page(account.drafts.all().order_by("-datetime_received"), limit)
+        page, truncated, next_offset = take_page_at_offset(
+            account.drafts.all().order_by("-datetime_received"), limit=limit, offset=offset
+        )
         results = [serialize_email_summary(item) for item in page]
-        formatter.success(results, count=len(results), truncated=truncated)
+        formatter.success(results, count=len(results), truncated=truncated, offset=offset, next_offset=next_offset)
     except Exception as exc:
         raise classify_exception(exc) from exc
 
@@ -205,7 +204,7 @@ def draft_create(
         if response_requested:
             message_kwargs["is_response_requested"] = True
         message = Message(**message_kwargs)
-        _attach_files(message, attachments, parsed_inline)
+        attach_file_attachments(message, files=attachments, inline_files=parsed_inline)
         message.save()
         result_payload = {
             "message": "Draft created",
@@ -218,6 +217,134 @@ def draft_create(
         if sanitized_rules:
             result_payload["sanitized_rules"] = sanitized_rules
         formatter.success(result_payload)
+    except Exception as exc:
+        raise classify_write_exception(exc) from exc
+
+
+@draft.command("attach")
+@click.argument("draft_id")
+@click.option(
+    "--attach",
+    "attachments",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="Attach file(s) to the saved draft",
+)
+@click.option(
+    "--inline-attach",
+    "inline_attachments",
+    multiple=True,
+    help="Attach inline file(s) in format 'path[:cid]'",
+)
+@click.option("--if-changekey", default=None, help="Only attach if the draft still has this changekey")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate without attaching files")
+@click.pass_context
+def draft_attach(ctx, draft_id, attachments, inline_attachments, if_changekey, dry_run):
+    """Add file attachments to an existing draft without sending it."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    parsed_inline = [parse_inline_attachment(item) for item in inline_attachments]
+    if not attachments and not parsed_inline:
+        raise CliError("Provide --attach and/or --inline-attach.", code="INVALID_INPUT", exit_code=2)
+    if if_changekey is not None and not if_changekey.strip():
+        raise CliError("--if-changekey cannot be empty.", code="INVALID_INPUT", exit_code=2)
+
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "draft.attach",
+                "preview": {
+                    "draft_id": draft_id,
+                    "attachments": [
+                        {"name": path.name, "size": path.stat().st_size if path.is_file() else None}
+                        for path in attachments
+                    ],
+                    "inline_attachments": [
+                        {
+                            "name": path.name,
+                            "size": path.stat().st_size if path.is_file() else None,
+                            "content_id": cid,
+                        }
+                        for path, cid in parsed_inline
+                    ],
+                    "if_changekey": if_changekey,
+                    "requires_confirm": False,
+                },
+            }
+        )
+        return
+
+    try:
+        account = get_connection(ctx)
+        message = require_draft(account, draft_id)
+        require_matching_changekey(message, if_changekey)
+        created = attach_file_attachments(message, files=attachments, inline_files=parsed_inline)
+        formatter.success(
+            {
+                "message": "Draft attachments added",
+                "id": getattr(message, "id", draft_id),
+                "changekey": getattr(message, "changekey", None),
+                "added": [serialize_attachment_summary(item) for item in created],
+                "attachments": [
+                    serialize_attachment_summary(item) for item in (getattr(message, "attachments", None) or [])
+                ],
+                "outcome": "succeeded",
+            }
+        )
+    except Exception as exc:
+        raise classify_write_exception(exc) from exc
+
+
+@draft.command("detach")
+@click.argument("draft_id")
+@click.option("--attachment-id", "attachment_ids", multiple=True, help="EWS attachment id to remove")
+@click.option("--name", "names", multiple=True, help="Unique attachment filename to remove")
+@click.option("--if-changekey", default=None, help="Only detach if the draft still has this changekey")
+@click.option("--dry-run", is_flag=True, default=False, help="Validate without removing attachments")
+@click.pass_context
+def draft_detach(ctx, draft_id, attachment_ids, names, if_changekey, dry_run):
+    """Remove attachments from an existing draft without sending it."""
+    formatter = OutputFormatter(ctx.obj.get("fmt", "json"))
+    if not attachment_ids and not names:
+        raise CliError("Provide --attachment-id and/or --name.", code="INVALID_INPUT", exit_code=2)
+    if if_changekey is not None and not if_changekey.strip():
+        raise CliError("--if-changekey cannot be empty.", code="INVALID_INPUT", exit_code=2)
+
+    if dry_run:
+        formatter.success(
+            {
+                "dry_run": True,
+                "action": "draft.detach",
+                "preview": {
+                    "draft_id": draft_id,
+                    "attachment_ids": list(attachment_ids),
+                    "names": list(names),
+                    "if_changekey": if_changekey,
+                    "requires_confirm": False,
+                },
+            }
+        )
+        return
+
+    try:
+        account = get_connection(ctx)
+        message = require_draft(account, draft_id)
+        require_matching_changekey(message, if_changekey)
+        selected = select_message_attachments(message, attachment_ids=attachment_ids, names=names)
+        removed = [serialize_attachment_summary(item) for item in selected]
+        detach_message_attachments(message, selected)
+        formatter.success(
+            {
+                "message": "Draft attachments removed",
+                "id": getattr(message, "id", draft_id),
+                "changekey": getattr(message, "changekey", None),
+                "removed": removed,
+                "attachments": [
+                    serialize_attachment_summary(item) for item in (getattr(message, "attachments", None) or [])
+                ],
+                "outcome": "succeeded",
+            }
+        )
     except Exception as exc:
         raise classify_write_exception(exc) from exc
 

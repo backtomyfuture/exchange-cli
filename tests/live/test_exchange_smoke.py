@@ -21,10 +21,11 @@ def test_live_connection_and_inbox_summary_shape():
     try:
         account = connection_manager.get_account()
         account.root.refresh()
-        results, _truncated = list_email_summaries(
+        results, _truncated, _skipped_items, _next_offset = list_email_summaries(
             account,
             folder_name="inbox",
             limit=1,
+            offset=0,
             unread=False,
             with_preview=False,
         )

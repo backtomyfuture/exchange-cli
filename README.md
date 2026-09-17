@@ -18,11 +18,12 @@
 - **Agent-First 原生设计**：默认统一返回结构化 JSON 数据信封（包含 `ok`, `data`, `error`, `code`, `meta.request_id`, `meta.elapsed_ms`），内置 `--dry-run` 预演校验及高危写操作强制 `--confirm` 授权机制。
 - **轻量无状态架构**：纯命令行前台进程直连 EWS，无后台常驻 Daemon 守护进程，无运行时数据库依赖，启动迅速且易于容器化与沙箱化调度。
 - **全方位协同支持**：
-  - **邮件管理**：收发邮件、回复、转发、搜索、标记已读/未读、正文清洗转换（默认 Markdown，按需提供 HTML）、超长正文截断保护、附件安全下载（排他写入与路径穿越防御）。
+  - **邮件管理**：收发邮件、回复、转发、搜索、更新草稿/元数据、复制/归档/恢复、标记已读/垃圾邮件、正文清洗转换（默认 Markdown，按需提供 HTML）、超长正文截断保护、附件安全下载、EWS/MIME 导入导出、会议邀请应答。
   - **日历与会议**：日程检索、会议创建、更新与取消，细粒度控制参会人邀请通知。
   - **任务待办**：任务列表过滤、状态流转（`NotStarted`, `InProgress`, `Completed` 等）。
   - **联系人与通讯录**：支持查询个人联系人，支持解析企业全局地址簿（GAL / Global Address List）。
-  - **文件夹树**：递归浏览邮箱文件夹层级，支持中英文常见别名与深层路径寻址。
+  - **文件夹**：浏览层级树，创建、重命名、移动、删除与清空邮件文件夹。
+  - **邮箱设置**：自动回复（OOF）、发送前 MailTips、委派读取、服务端收件规则。
 - **生产级安全基线**：
   - 本地账号凭证采用 Fernet 对称加密安全存储。
   - 默认强制开启严格的 TLS/SSL 证书校验，原生支持企业私有根证书（CA Bundle）。
@@ -126,9 +127,10 @@ pip install -e ".[dev]"
 | `config` | `init`, `show` | 账号初始化与配置查看（密码脱敏） |
 | `doctor` | `doctor` (`--offline`) | 全链路健康检查与 EWS 连通性诊断 |
 | `schema` | `schema` (`<command>`) | 输出机器可读的 CLI 参数与语义契约 |
-| `email` | `list`, `read`, `send`, `reply`, `forward`, `search`, `move`, `delete`, `watch` | 邮件增删改查、批量检索与实时监听 |
-| `draft` | `list`, `create`, `send`, `delete` | 草稿箱管理与发送 |
-| `folder` | `list`, `tree` | 邮箱文件夹平面列表与层级树 |
+| `email` | `list`, `read`, `send`, `reply`, `forward`, `search`, `update`, `copy`, `move`, `archive`, `restore`, `mark-read`, `mark-unread`, `mark-junk`, `mark-not-junk`, `delete`, `export`, `import`, `export-mime`, `import-mime`, `respond-meeting`, `watch` | 邮件增删改查、生命周期、导入导出与实时监听 |
+| `draft` | `list`, `create`, `update`, `attach`, `detach`, `send`, `delete` | 草稿箱管理、附件编辑与发送 |
+| `folder` | `list`, `tree`, `create`, `rename`, `move`, `delete`, `empty` | 邮箱文件夹浏览与生命周期管理 |
+| `mailbox` | `oof`, `tips`, `delegates`, `rules` | 自动回复、MailTips、委派读取与收件规则 |
 | `calendar` | `list`, `create`, `update`, `delete` | 日程与会议管理 |
 | `task` | `list`, `create`, `update`, `complete`, `delete` | 待办任务增删改查 |
 | `contact` | `list`, `search`, `resolve` | 个人联系人与企业全局地址簿 (GAL) 查询 |
@@ -177,7 +179,7 @@ pip install -e ".[dev]"
 ### 安全与执行准则
 
 1. **严格授权机制（`--confirm`）**：
-   - 产生外部副作用的高影响写操作（如 `email send`、`email reply`、`email forward`、`draft send` 以及各项 `delete` 操作），在缺少 `--confirm` 时将直接返回 `CONFIRMATION_REQUIRED` 并拒绝执行。
+   - 产生外部副作用的高影响写操作（如 `email send`、`email reply`、`email forward`、`draft send`、`email import`、`email mark-junk`、`mailbox oof set`、`mailbox rules` 写操作以及各项 `delete`/`empty` 操作），在缺少 `--confirm` 时将直接返回 `CONFIRMATION_REQUIRED` 并拒绝执行。
    - Agent 必须在向用户展示关键影响并获得明确授权后，方可在重试时传入 `--confirm`。
    - 支持 `--dry-run` 选项进行安全预演，不发起实际网络写入，免授权返回操作预检结构。
 2. **写操作超时防护**：

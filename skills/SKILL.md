@@ -1,8 +1,8 @@
 ---
 name: exchange-cli
 description: |
-  本地部署的 Microsoft Exchange Server 单账号 CLI：读取、搜索、发送、回复和转发邮件，标记已读、移动、删除，管理草稿、日历、任务、联系人（含企业全局地址簿 GAL 解析）和文件夹，并前台监听新邮件。
-  当用户要配置、测试、排查或操作当前机器上的本地 Exchange/EWS 邮箱时使用，包括“配置 Exchange”“exchange-cli 连接不上”“查邮件”“发邮件”“看日程”“建会议”“完成任务”“找同事”“找联系人”“监听新邮件”等请求。
+  本地部署的 Microsoft Exchange Server 单账号 CLI：读取、搜索、发送、回复和转发邮件，标记已读、移动、删除、归档/恢复，管理草稿附件、日历、任务、联系人（含企业全局地址簿 GAL 解析）、文件夹和邮箱设置（OOF、MailTips、委派、收件规则），并前台监听新邮件。
+  当用户要配置、测试、排查或操作当前机器上的本地 Exchange/EWS 邮箱时使用，包括“配置 Exchange”“exchange-cli 连接不上”“查邮件”“发邮件”“看日程”“建会议”“完成任务”“找同事”“找联系人”“监听新邮件”“设置自动回复”“收件规则”“创建文件夹”等请求。
   如果用户只说 Outlook、但未说明邮箱后端，先确认是否为本地 Exchange Server。
   不适用于 Exchange Online / Microsoft 365、Gmail、飞书邮箱或其他云邮箱。
 metadata:
@@ -77,18 +77,20 @@ exchange-cli --request-id 12345-uuid email list
 
 以下高影响操作必须先向用户展示关键影响、获得明确授权，再传入 `--confirm`：
 
-- `email send`、`email reply`（未加 `--draft` 时）、`email forward`（未加 `--draft` 时）
+- `email send`、`email reply`（未加 `--draft` 时）、`email forward`（未加 `--draft` 时）、`email respond-meeting`
 - `draft send`
-- `email delete`（默认移入回收站；`--permanent` 才永久删除）、`draft delete`、`calendar delete`、`task delete`
+- `email delete`（默认移入回收站；`--permanent` 才永久删除）、`draft delete`、`calendar delete`、`task delete`、`folder delete`、`folder empty`
+- `email import`、`email import-mime`、`email mark-junk`、`email mark-not-junk`
+- `mailbox oof set`、`mailbox rules create`、`mailbox rules update`、`mailbox rules delete`
 - 带 `--attendees` 且发送邀请通知的 `calendar create`（若显式指定 `--notify none` 则不发送邀请通知，可免 `--confirm`）
 - `--notify all` 的 `calendar update`（向参会人发送变更通知；`calendar delete` 本身始终需要 `--confirm`）
 
 高危写操作安全预演（`--dry-run`）：
-以上写命令（`email send`、`email reply`、`email forward`、`email delete`、`calendar create`、`calendar delete`、`draft send`、`draft delete`、`task delete`）均支持 `--dry-run`。`--dry-run` 不会连接 Exchange 网络，不要求 `--confirm`，返回结构化预览（如附件大小、收件人列表、正文长度、是否需要 confirm），Agent 在向用户汇报前可用 `--dry-run` 预演校验入参。
+以上写命令以及 `draft attach` / `draft detach` / `folder create` 等内部写操作均支持 `--dry-run`。`--dry-run` 不会连接 Exchange 网络，不要求 `--confirm`，返回结构化预览（如附件大小、收件人列表、正文长度、是否需要 confirm），Agent 在向用户汇报前可用 `--dry-run` 预演校验入参。
 
 `CONFIRMATION_REQUIRED` 只表示缺少 CLI 参数，不代表用户已经授权。不要为了让命令成功而自行补上 `--confirm`。
 
-其他写操作——创建草稿（`draft create`，以及 `email reply --draft`、`email forward --draft` 会生成原生回复/转发项存入草稿箱并返回草稿 ID）、创建无参会人日程、更新日程、创建/更新/完成任务、标记邮件已读/未读（`email mark-read` / `email mark-unread`）、移动邮件（`email move`）——虽无需 CLI `--confirm` 参数，但均会变更邮箱或项目状态，仍只能在用户明确要求后执行。
+其他写操作——创建/更新草稿（`draft create`、`draft update`、`draft attach`、`draft detach`，以及 `email reply --draft`、`email forward --draft` 会生成原生回复/转发项存入草稿箱并返回草稿 ID）、创建无参会人日程、更新日程、创建/更新/完成任务、标记邮件已读/未读（`email mark-read` / `email mark-unread`）、移动/复制/归档/恢复邮件（`email move` / `email copy` / `email archive` / `email restore`）、创建/重命名/移动文件夹——虽无需 CLI `--confirm` 参数，但均会变更邮箱或项目状态，仍只能在用户明确要求后执行。
 
 安全边界：
 
@@ -216,9 +218,10 @@ exchange-cli config show
 | 配置 | `config init`、`config show` |
 | 诊断 | `doctor`（`--offline` 可跳过 EWS 探针） |
 | 契约 | `schema`、`schema email.send` |
-| 邮件 | `email list`、`email read`、`email search`、`email send`、`email reply`、`email forward`、`email mark-read`、`email mark-unread`、`email move`、`email delete`、`email watch` |
-| 草稿 | `draft list`、`draft create`、`draft send`、`draft delete` |
-| 文件夹 | `folder list`、`folder tree` |
+| 邮件 | `email list`、`email read`、`email search`、`email send`、`email reply`、`email forward`、`email update`、`email copy`、`email archive`、`email restore`、`email mark-read`、`email mark-unread`、`email mark-junk`、`email mark-not-junk`、`email move`、`email delete`、`email export`、`email import`、`email export-mime`、`email import-mime`、`email respond-meeting`、`email watch` |
+| 草稿 | `draft list`、`draft create`、`draft update`、`draft attach`、`draft detach`、`draft send`、`draft delete` |
+| 文件夹 | `folder list`、`folder tree`、`folder create`、`folder rename`、`folder move`、`folder delete`、`folder empty` |
+| 邮箱 | `mailbox oof get`、`mailbox oof set`、`mailbox tips get`、`mailbox delegates list`、`mailbox rules list`、`mailbox rules get`、`mailbox rules create`、`mailbox rules update`、`mailbox rules delete` |
 | 日历 | `calendar list`、`calendar create`、`calendar update`、`calendar delete` |
 | 任务 | `task list`、`task create`、`task update`、`task complete`、`task delete` |
 | 联系人 | `contact list`、`contact search`、`contact resolve` |
@@ -242,8 +245,13 @@ exchange-cli config show
 - 任务状态使用 Exchange 标准值：`NotStarted`、`InProgress`、`Completed`、`WaitingOnOthers`、`Deferred`（大小写不敏感，如 `notstarted` 亦可接受）。`--status` 在客户端筛选。
 - 查找组织成员/同事用 `contact resolve`（企业全局地址簿/GAL），不要只用个人联系人 `contact search`。`contact resolve` 与 `contact search` 均校验非空查询（空值返回 `INVALID_INPUT`）。
 - `calendar list` 不传参数默认查询当天（无 `--today` 选项）；指定范围时 `--end YYYY-MM-DD` 含当天，查询某一天应传相同 start/end 或直接不传参数。
-- `email delete` 默认移入回收站；永久删除必须同时给 `--permanent --confirm`。
-- 会议邀请与更新：带参会人的 `calendar create` 默认发送通知（需要 `--confirm`），但若指定 `--notify none` 则不发通知且免 `--confirm`；会议更新默认不通知参会人（`--notify all` 才会发通知，且需要 `--confirm`）；删除会议始终需要 `--confirm`，指定 `--notify all` 会额外发送会议取消通知。
+- `email delete` 默认移入回收站；永久删除必须同时给 `--permanent --confirm`。`--soft` 进入 Recoverable Items。
+- `draft attach` / `draft detach` 只作用于已保存草稿；非草稿返回 `NOT_FOUND`。`detach` 可用 `--attachment-id` 或唯一 `--name`；同名附件必须用 id。二者与 `draft update` 一样支持 `--if-changekey`。
+- `folder delete` / `folder empty` 需要 `--confirm`；默认移入已删除邮件，`--permanent` 硬删，`--soft` 进 Recoverable Items。系统文件夹不可重命名/移动/删除，但可以 `empty`。
+- `mailbox oof set` 会向内外发件人自动回复，需要 `--confirm`。`mailbox rules create/update/delete` 会改变此后投递路径，需要 `--confirm`，规则体用 `--spec-file` JSON。`mailbox tips get` 是发送前只读检查。
+- `email export` 写出不透明 EWS ExportItems 载荷；`email export-mime` 写出 RFC 822。对应 `import` / `import-mime` 需要 `--confirm`，且不得覆盖已有本地输出文件。
+- `email mark-junk` / `email mark-not-junk` 会改被拦发件人列表，需要 `--confirm`。
+- 会议邀请与更新：带参会人的 `calendar create` 默认发送通知（需要 `--confirm`），但若指定 `--notify none` 则不发通知且免 `--confirm`；会议更新默认不通知参会人（`--notify all` 才会发通知，且需要 `--confirm`）；删除会议始终需要 `--confirm`，指定 `--notify all` 会额外发送会议取消通知。收到的会议请求用 `email respond-meeting --response accept|tentative|decline`。
 - 写操作超时返回 `WRITE_OUTCOME_UNKNOWN` 且 `retryable=false`，不要自动重试。
 
 具体选项和当前默认值始终以 `exchange-cli <group> <command> --help` 为准。
@@ -270,6 +278,9 @@ exchange-cli email read MESSAGE_ID --save-attachments ./downloads
 exchange-cli email mark-read MESSAGE_ID
 exchange-cli email mark-unread MESSAGE_ID
 exchange-cli email move MESSAGE_ID --folder trash
+exchange-cli email copy MESSAGE_ID --folder archive
+exchange-cli email restore MESSAGE_ID --folder inbox
+exchange-cli email mark-junk MESSAGE_ID --confirm
 exchange-cli email delete MESSAGE_ID --confirm
 exchange-cli email delete MESSAGE_ID --permanent --confirm
 ```
@@ -313,8 +324,24 @@ exchange-cli draft create --to "user@example.com" --subject "主题" --body "正
 exchange-cli draft create --to "user@example.com" --cc "team@example.com" --bcc "audit@example.com" --subject "方案草稿" --body '<h1>方案</h1><p><img src="cid:chart.png"></p>' --body-type html --attach ./draft.docx --inline-attach ./chart.png
 # 指定发件人创建草稿：
 exchange-cli draft create --to "user@example.com" --from "alias@example.com" --subject "公文草稿" --body "正文"
+exchange-cli draft update DRAFT_ID --subject "修订主题" --body "修订正文"
+exchange-cli draft attach DRAFT_ID --attach ./contract.pdf --inline-attach ./logo.png:logo@corp
+exchange-cli draft detach DRAFT_ID --name contract.pdf
 exchange-cli draft send DRAFT_ID --dry-run
 exchange-cli draft send DRAFT_ID --confirm
+```
+
+文件夹与邮箱设置：
+
+```bash
+exchange-cli folder create "项目归档" --parent inbox
+exchange-cli folder rename "项目归档" --name "2026项目归档"
+exchange-cli folder empty "inbox/临时" --confirm
+exchange-cli mailbox oof get
+exchange-cli mailbox oof set --state disabled --confirm
+exchange-cli mailbox tips get --to "user@example.com"
+exchange-cli mailbox delegates list
+exchange-cli mailbox rules list
 ```
 
 日历：

@@ -7,9 +7,11 @@ import pytest
 from click.testing import CliRunner
 from exchangelib import FileAttachment, HTMLBody
 from exchangelib.errors import DoesNotExist, TransportError
+from exchangelib.items import MeetingRequest
 from exchangelib.properties import ConversationId
 
 from exchange_cli.commands.email import _find_message, _parse_search_date
+from exchange_cli.core.email_service import scan_email_page
 from exchange_cli.core.errors import CliError
 from exchange_cli.main import cli
 
@@ -135,6 +137,39 @@ class TestEmailList:
         payload = json.loads(result.output)
         assert payload["ok"] is False
         assert payload["code"] == "CONNECTION_ERROR"
+
+    def test_list_returns_a_safe_raw_offset_for_the_next_page(self, runner, mock_conn):
+        messages = [_mock_message("M1"), _mock_message("M2"), _mock_message("M3")]
+        items_mock = mock_conn.inbox.all.return_value.only.return_value.order_by.return_value
+        items_mock.__getitem__.side_effect = lambda item_slice: messages[item_slice]
+
+        result = runner.invoke(cli, ["email", "list", "--limit", "1", "--offset", "1"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["offset"] == 1
+        assert payload["next_offset"] == 2
+        assert payload["truncated"] is True
+        assert [message["id"] for message in payload["data"]] == ["M2"]
+
+    def test_mixed_item_pages_do_not_skip_the_email_after_a_non_email_item(self):
+        non_email = object()
+        messages = [_mock_message("M1"), _mock_message("M2")]
+        items = [non_email, *messages]
+
+        first_page, first_truncated, first_skipped, next_offset = scan_email_page(items, limit=1)
+        second_page, second_truncated, second_skipped, final_offset = scan_email_page(
+            items, limit=1, offset=next_offset
+        )
+
+        assert [message.id for message in first_page] == ["M1"]
+        assert first_truncated is True
+        assert first_skipped == 1
+        assert next_offset == 2
+        assert [message.id for message in second_page] == ["M2"]
+        assert second_truncated is False
+        assert second_skipped == 0
+        assert final_offset is None
 
 
 class TestEmailRead:
@@ -295,6 +330,110 @@ class TestEmailRead:
         payload = json.loads(result.output)
         assert payload["data"]["saved_attachments"] == [str(destination / "report.txt")]
         assert (destination / "report.txt").read_bytes() == b"report"
+
+
+class TestEmailExportImport:
+    def test_export_writes_the_opaque_ews_payload_to_a_new_file(self, runner, mock_conn, tmp_path):
+        message = _mock_message("M1")
+        output_path = tmp_path / "message.ews"
+        mock_conn.export.return_value = ["EXPORTED-DATA"]
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "export", "M1", "--output", str(output_path)])
+
+        assert result.exit_code == 0
+        assert output_path.read_bytes() == b"EXPORTED-DATA"
+        mock_conn.export.assert_called_once_with([message])
+        payload = json.loads(result.output)["data"]
+        assert payload["format"] == "ews-export"
+        assert payload["bytes"] == len(b"EXPORTED-DATA")
+
+    def test_export_never_overwrites_an_existing_local_file(self, runner, mock_conn, tmp_path):
+        message = _mock_message("M1")
+        output_path = tmp_path / "message.ews"
+        output_path.write_bytes(b"keep-me")
+        mock_conn.export.return_value = ["EXPORTED-DATA"]
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "export", "M1", "--output", str(output_path)])
+
+        assert result.exit_code == 1
+        assert json.loads(result.output)["code"] == "OUTPUT_EXISTS"
+        assert output_path.read_bytes() == b"keep-me"
+
+    def test_import_uploads_the_exact_ews_payload_to_the_requested_folder(self, runner, mock_conn, tmp_path):
+        input_path = tmp_path / "message.ews"
+        input_path.write_text("EXPORTED-DATA", encoding="utf-8")
+        mock_conn.inbox.name = "Inbox"
+        mock_conn.upload.return_value = [("IMPORTED", "CK1")]
+
+        result = runner.invoke(
+            cli,
+            ["email", "import", "--input", str(input_path), "--folder", "inbox", "--confirm"],
+        )
+
+        assert result.exit_code == 0
+        mock_conn.upload.assert_called_once_with([(mock_conn.inbox, "EXPORTED-DATA")])
+        payload = json.loads(result.output)["data"]
+        assert payload["imported_item"] == {"id": "IMPORTED", "changekey": "CK1"}
+
+    def test_import_dry_run_does_not_connect(self, runner, tmp_path):
+        input_path = tmp_path / "message.ews"
+        input_path.write_text("EXPORTED-DATA", encoding="utf-8")
+
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(
+                cli,
+                ["email", "import", "--input", str(input_path), "--folder", "inbox", "--dry-run"],
+            )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["data"]["preview"]["bytes"] == len(b"EXPORTED-DATA")
+        get_connection.assert_not_called()
+
+    def test_import_requires_confirmation_before_connecting(self, runner, tmp_path):
+        input_path = tmp_path / "message.ews"
+        input_path.write_text("EXPORTED-DATA", encoding="utf-8")
+
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(cli, ["email", "import", "--input", str(input_path), "--folder", "inbox"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
+
+    def test_export_mime_writes_raw_bytes(self, runner, mock_conn, tmp_path):
+        message = _mock_message("M1")
+        message.mime_content = b"Subject: Test\r\n\r\nHello"
+        output_path = tmp_path / "message.eml"
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(cli, ["email", "export-mime", "M1", "--output", str(output_path)])
+
+        assert result.exit_code == 0
+        assert output_path.read_bytes() == message.mime_content
+        assert json.loads(result.output)["data"]["format"] == "rfc822"
+
+    def test_import_mime_creates_a_message_with_the_raw_bytes(self, runner, mock_conn, tmp_path):
+        input_path = tmp_path / "message.eml"
+        mime_content = b"Subject: Test\r\n\r\nHello"
+        input_path.write_bytes(mime_content)
+        mock_conn.inbox.name = "Inbox"
+
+        with patch("exchange_cli.commands.email.Message") as message_cls:
+            message = MagicMock()
+            message.id = "IMPORTED"
+            message.changekey = "CK1"
+            message_cls.return_value = message
+            result = runner.invoke(
+                cli,
+                ["email", "import-mime", "--input", str(input_path), "--folder", "inbox", "--confirm"],
+            )
+
+        assert result.exit_code == 0
+        message_cls.assert_called_once_with(account=mock_conn, folder=mock_conn.inbox, mime_content=mime_content)
+        message.save.assert_called_once_with()
+        assert json.loads(result.output)["data"]["id"] == "IMPORTED"
 
 
 class TestEmailSend:
@@ -621,6 +760,77 @@ class TestEmailSend:
         draft_msg.save.assert_called_once_with(update_fields=["body"])
         assert "Edit-Time-Data" not in str(draft_msg.body)
 
+    def test_meeting_response_uses_native_accept_with_optional_proposal(self, runner, mock_conn):
+        meeting = MagicMock(spec=MeetingRequest)
+        meeting.id = "MEETING1"
+
+        with patch("exchange_cli.commands.email.require_message", return_value=meeting):
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "respond-meeting",
+                    "MEETING1",
+                    "--response",
+                    "accept",
+                    "--body",
+                    "Works for me",
+                    "--propose-start",
+                    "2026-10-01T09:00:00Z",
+                    "--propose-end",
+                    "2026-10-01T10:00:00Z",
+                    "--confirm",
+                ],
+            )
+
+        assert result.exit_code == 0
+        meeting.accept.assert_called_once()
+        kwargs = meeting.accept.call_args.kwargs
+        assert kwargs["message_disposition"] == "SendAndSaveCopy"
+        assert kwargs["body"] == "Works for me"
+        assert kwargs["proposed_start"].isoformat() == "2026-10-01T09:00:00+00:00"
+        assert kwargs["proposed_end"].isoformat() == "2026-10-01T10:00:00+00:00"
+        assert json.loads(result.output)["data"]["response"] == "accept"
+
+    def test_meeting_response_requires_confirmation_before_connection(self, runner):
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(cli, ["email", "respond-meeting", "MEETING1", "--response", "decline"])
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "CONFIRMATION_REQUIRED"
+        get_connection.assert_not_called()
+
+    def test_meeting_response_rejects_an_ordinary_message(self, runner, mock_conn):
+        message = _mock_message("M1")
+
+        with patch("exchange_cli.commands.email.require_message", return_value=message):
+            result = runner.invoke(
+                cli,
+                ["email", "respond-meeting", "M1", "--response", "tentative", "--confirm"],
+            )
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "INVALID_MESSAGE_TYPE"
+
+    def test_meeting_response_requires_both_proposal_bounds_before_connecting(self, runner):
+        with patch("exchange_cli.commands.email.get_connection") as get_connection:
+            result = runner.invoke(
+                cli,
+                [
+                    "email",
+                    "respond-meeting",
+                    "MEETING1",
+                    "--response",
+                    "tentative",
+                    "--propose-start",
+                    "2026-10-01T09:00:00Z",
+                ],
+            )
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["code"] == "INVALID_INPUT"
+        get_connection.assert_not_called()
+
     def test_mark_read(self, runner, mock_conn):
         message = _mock_message()
         mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
@@ -939,6 +1149,19 @@ class TestEmailSearch:
         q_expr = str(call_args[0])
         assert "sender icontains 'alice@example.com'" in q_expr
         assert "has_attachments == True" in q_expr
+
+    def test_search_uses_the_requested_offset(self, runner, mock_conn):
+        messages = [_mock_message("M1"), _mock_message("M2"), _mock_message("M3")]
+        items_mock = mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value
+        items_mock.__getitem__.side_effect = lambda item_slice: messages[item_slice]
+
+        result = runner.invoke(cli, ["email", "search", "quarterly", "--limit", "1", "--offset", "2"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["offset"] == 2
+        assert "next_offset" not in payload
+        assert [message["id"] for message in payload["data"]] == ["M3"]
 
     def test_search_resolves_chinese_name_via_directory(self, runner, mock_conn):
         mock_conn.inbox.filter.return_value.only.return_value.order_by.return_value.__getitem__ = MagicMock(

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from exchange_cli.core.query import scan_matching, take_page
+from exchange_cli.core.query import scan_matching, take_page, take_page_at_offset
 
 
 def test_take_page_reports_truncation():
@@ -9,6 +9,20 @@ def test_take_page_reports_truncation():
 
     assert page == [0, 1, 2]
     assert truncated is True
+
+
+def test_take_page_at_offset_returns_a_resume_offset_only_when_more_items_exist():
+    page, truncated, next_offset = take_page_at_offset(["a", "b", "c"], limit=1, offset=1)
+
+    assert page == ["b"]
+    assert truncated is True
+    assert next_offset == 2
+
+    final_page, final_truncated, final_next_offset = take_page_at_offset(["a", "b", "c"], limit=1, offset=2)
+
+    assert final_page == ["c"]
+    assert final_truncated is False
+    assert final_next_offset is None
 
 
 def test_scan_matching_does_not_stop_at_the_first_page():

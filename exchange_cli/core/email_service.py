@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from exchangelib import FileAttachment
 from exchangelib.errors import ResponseMessageError
 from exchangelib.folders import Folder
 
 from .errors import NOT_FOUND_EXCEPTIONS, CliError
 from .serializers import serialize_email_summary
+from .validation import MAX_SCAN
 
 WELL_KNOWN_FOLDERS: dict[str, tuple[str | None, tuple[str, ...]]] = {
     # Inbox
@@ -243,47 +247,62 @@ def resolve_archive_folder(account, folder_name: str):
     return current
 
 
-def scan_email_page(queryset, limit: int, scan_limit: int = 2000) -> tuple[list, bool, int]:
-    """Take up to `limit` email items, skipping non-email items such as contacts or tasks."""
-    # Do not turn an EWS failure into a successful, empty result. A caller must
-    # be able to distinguish an empty folder from a broken connection, expired
-    # credential, or server-side query failure.
-    initial_page = list(queryset[: limit + 1])
+def scan_email_page(
+    queryset,
+    limit: int,
+    *,
+    offset: int = 0,
+    scan_limit: int = MAX_SCAN,
+) -> tuple[list, bool, int, int | None]:
+    """Take a bounded, offset-based page of email items from a mixed-item folder.
+
+    EWS offsets address all items in a folder, not only messages. To avoid
+    losing a message after contacts, tasks, or calendar items are skipped, the
+    next offset always points immediately after the final returned email. The
+    following request may scan some non-email items again, but it cannot skip a
+    message. Folder changes between calls can still make EWS absolute offsets
+    unstable, which is inherent to the upstream API.
+    """
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    if scan_limit < 1:
+        raise ValueError("scan_limit must be positive")
 
     email_items = []
     skipped_items = 0
     scanned = 0
+    scan_offset = offset
+    next_offset_after_result: int | None = None
 
-    for item in initial_page:
-        scanned += 1
-        if is_email_item(item):
-            if len(email_items) == limit:
-                return email_items, True, skipped_items
-            email_items.append(item)
-        else:
-            skipped_items += 1
+    while scanned < scan_limit:
+        # Start with a small, efficient EWS page. Keep scanning only when
+        # mixed item types make that insufficient to establish completeness.
+        requested = min(limit + 1, scan_limit - scanned)
+        raw_items = list(queryset[scan_offset : scan_offset + requested])
+        if not raw_items:
+            return email_items, False, skipped_items, None
 
-    # An under-filled first page proves the query is exhausted. When it is
-    # full but contains non-email items, keep scanning until we can either
-    # collect one extra email (therefore truncated) or exhaust the query.
-    if len(initial_page) <= limit:
-        return email_items, False, skipped_items
+        for item in raw_items:
+            scanned += 1
+            scan_offset += 1
+            if is_email_item(item):
+                if len(email_items) == limit:
+                    return email_items, True, skipped_items, next_offset_after_result
+                email_items.append(item)
+                next_offset_after_result = scan_offset
+            else:
+                skipped_items += 1
 
-    for item in queryset[scanned:]:
-        if scanned >= scan_limit:
-            # We deliberately stop pathological mixed-item folders. There may
-            # still be an email after the scan boundary, so advertise a
-            # truncated result rather than silently claiming completeness.
-            return email_items, True, skipped_items
-        scanned += 1
-        if is_email_item(item):
-            if len(email_items) == limit:
-                return email_items, True, skipped_items
-            email_items.append(item)
-        else:
-            skipped_items += 1
+        # A short EWS slice proves there is no following raw item. The current
+        # page therefore contains every remaining email.
+        if len(raw_items) < requested:
+            return email_items, False, skipped_items, None
 
-    return email_items, False, skipped_items
+    # The bounded scan prevents a pathological mixed folder from turning one
+    # CLI request into an unbounded server traversal. Advertise incompleteness
+    # and provide a safe resume point.
+    resume_offset = next_offset_after_result if len(email_items) == limit else scan_offset
+    return email_items, True, skipped_items, resume_offset
 
 
 def project_email_summary_fields(queryset, *, include_body_preview: bool):
@@ -311,14 +330,18 @@ def list_email_summaries(
     *,
     folder_name: str,
     limit: int,
+    offset: int,
     unread: bool,
     with_preview: bool,
-) -> tuple[list[dict], bool, int]:
+) -> tuple[list[dict], bool, int, int | None]:
     folder = resolve_mail_folder(account, folder_name)
     queryset = folder.filter(is_read=False) if unread else folder.all()
     projected = project_email_summary_fields(queryset, include_body_preview=with_preview)
-    page, truncated, skipped_items = scan_email_page(projected.order_by("-datetime_received"), limit)
-    return [serialize_email_summary(item, include_body_preview=with_preview) for item in page], truncated, skipped_items
+    page, truncated, skipped_items, next_offset = scan_email_page(
+        projected.order_by("-datetime_received"), limit, offset=offset
+    )
+    summaries = [serialize_email_summary(item, include_body_preview=with_preview) for item in page]
+    return summaries, truncated, skipped_items, next_offset
 
 
 def find_message(account, message_id: str):
@@ -367,6 +390,105 @@ def require_message(account, message_id: str):
     return message
 
 
+def require_draft(account, draft_id: str):
+    message = require_message(account, draft_id)
+    if not bool(getattr(message, "is_draft", False)):
+        raise CliError(f"Draft not found: {draft_id}", code="NOT_FOUND")
+    return message
+
+
+def require_matching_changekey(message, expected_changekey: str | None) -> None:
+    if expected_changekey is None:
+        return
+    actual = getattr(message, "changekey", None)
+    if expected_changekey != actual:
+        raise CliError(
+            "Message changed since the supplied changekey was read.",
+            code="CONFLICT",
+            exit_code=1,
+            details={"expected_changekey": expected_changekey, "actual_changekey": actual},
+        )
+
+
+def _attachment_id_value(attachment) -> str | None:
+    attachment_id = getattr(attachment, "attachment_id", None)
+    if attachment_id is None:
+        return None
+    if isinstance(attachment_id, str):
+        return attachment_id
+    value = getattr(attachment_id, "id", None)
+    return value if value is None or isinstance(value, str) else str(value)
+
+
+def attach_file_attachments(message, *, files, inline_files=None):
+    """Attach local files to a message. Saved items are updated immediately by EWS."""
+    created = []
+    for path in files or []:
+        attachment = FileAttachment(name=path.name, content=Path(path).read_bytes())
+        message.attach(attachment)
+        created.append(attachment)
+    for path, content_id in inline_files or []:
+        attachment = FileAttachment(
+            name=path.name,
+            content=Path(path).read_bytes(),
+            is_inline=True,
+            content_id=content_id,
+        )
+        message.attach(attachment)
+        created.append(attachment)
+    return created
+
+
+def select_message_attachments(message, *, attachment_ids=(), names=()):
+    """Resolve saved attachments by EWS id and/or unique filename."""
+    wanted_ids = [value.strip() for value in attachment_ids]
+    wanted_names = [value.strip() for value in names]
+    if not wanted_ids and not wanted_names:
+        raise CliError("Provide --attachment-id and/or --name.", code="INVALID_INPUT", exit_code=2)
+    if any(not value for value in wanted_ids):
+        raise CliError("--attachment-id cannot be empty.", code="INVALID_INPUT", exit_code=2)
+    if any(not value for value in wanted_names):
+        raise CliError("--name cannot be empty.", code="INVALID_INPUT", exit_code=2)
+
+    attachments = list(getattr(message, "attachments", None) or [])
+    selected: list = []
+    seen: set[int] = set()
+
+    def _add(attachment) -> None:
+        marker = id(attachment)
+        if marker not in seen:
+            seen.add(marker)
+            selected.append(attachment)
+
+    for attachment_id in wanted_ids:
+        matches = [item for item in attachments if _attachment_id_value(item) == attachment_id]
+        if not matches:
+            raise CliError(
+                f"Attachment not found: {attachment_id}",
+                code="NOT_FOUND",
+                details={"attachment_id": attachment_id},
+            )
+        _add(matches[0])
+
+    for name in wanted_names:
+        matches = [item for item in attachments if getattr(item, "name", None) == name]
+        if not matches:
+            raise CliError(f"Attachment not found: {name}", code="NOT_FOUND", details={"name": name})
+        if len(matches) > 1:
+            raise CliError(
+                f"Multiple attachments named {name!r}; use --attachment-id.",
+                code="INVALID_INPUT",
+                exit_code=2,
+                details={"name": name, "ids": [_attachment_id_value(item) for item in matches]},
+            )
+        _add(matches[0])
+    return selected
+
+
+def detach_message_attachments(message, attachments) -> None:
+    message.detach(list(attachments))
+
+
 def set_message_read_state(message, *, is_read: bool) -> None:
     message.is_read = is_read
     message.save(update_fields=["is_read"])
@@ -390,6 +512,43 @@ def archive_message(message, account, folder_name: str):
 
 def set_message_junk_state(message, *, is_junk: bool, move_item: bool) -> None:
     message.mark_as_junk(is_junk=is_junk, move_item=move_item)
+
+
+def respond_to_meeting_request(
+    message,
+    *,
+    response: str,
+    body=None,
+    proposed_start=None,
+    proposed_end=None,
+    save_copy: bool,
+):
+    """Send one of the native EWS responses to a meeting request."""
+    from exchangelib.items import MeetingRequest
+
+    if not isinstance(message, MeetingRequest):
+        raise CliError(
+            "The item is not a meeting request.",
+            code="INVALID_MESSAGE_TYPE",
+            exit_code=2,
+        )
+
+    method_name = {
+        "accept": "accept",
+        "tentative": "tentatively_accept",
+        "decline": "decline",
+    }[response]
+    kwargs = {}
+    if body is not None:
+        kwargs["body"] = body
+    if proposed_start is not None:
+        kwargs["proposed_start"] = proposed_start
+    if proposed_end is not None:
+        kwargs["proposed_end"] = proposed_end
+    return getattr(message, method_name)(
+        message_disposition="SendAndSaveCopy" if save_copy else "SendOnly",
+        **kwargs,
+    )
 
 
 def update_message(

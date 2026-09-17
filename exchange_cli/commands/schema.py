@@ -11,7 +11,7 @@ import click
 from ..core.errors import CliError
 from ..core.output import OutputFormatter
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 COMMAND_SEMANTICS: dict[str, dict[str, Any]] = {
     # Email operations
@@ -114,6 +114,105 @@ COMMAND_SEMANTICS: dict[str, dict[str, Any]] = {
         "summary": "Stream new email events in the foreground.",
         "error_codes": ["INVALID_FOLDER", "CONNECTION_ERROR"],
     },
+    "email.export": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "Export one item in opaque EWS ExportItems format.",
+        "error_codes": ["NOT_FOUND", "OUTPUT_EXISTS", "OUTPUT_WRITE_FAILED"],
+    },
+    "email.import": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Import an opaque EWS ExportItems payload into a mailbox folder.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "WRITE_OUTCOME_UNKNOWN", "INVALID_INPUT"],
+    },
+    "email.export-mime": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "Export one item's raw MIME content as RFC 822 data.",
+        "error_codes": ["NOT_FOUND", "MIME_CONTENT_UNAVAILABLE", "OUTPUT_EXISTS"],
+    },
+    "email.import-mime": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Create a mailbox item from an RFC 822 / .eml file.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "WRITE_OUTCOME_UNKNOWN", "INVALID_INPUT"],
+    },
+    "email.respond-meeting": {
+        "write": True,
+        "confirm": True,
+        "effect": "external_send",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Accept, tentatively accept, or decline a meeting request.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "WRITE_OUTCOME_UNKNOWN", "INVALID_MESSAGE_TYPE"],
+    },
+    "email.update": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Update mutable message metadata or draft compose fields.",
+        "error_codes": ["CONFLICT", "INVALID_MESSAGE_STATE", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "email.copy": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Copy a message to another primary-mailbox folder.",
+        "error_codes": ["NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "email.archive": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Move a message to an online archive mailbox folder.",
+        "error_codes": ["NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "email.mark-junk": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Mark a message as junk and update the blocked sender list.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "email.mark-not-junk": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Remove the junk classification and update the blocked sender list.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "email.restore": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Restore a soft-deleted message to a primary-mailbox folder.",
+        "error_codes": ["NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
+    },
     # Draft management
     "draft.list": {
         "write": False,
@@ -150,6 +249,115 @@ COMMAND_SEMANTICS: dict[str, dict[str, Any]] = {
         "retry": "never_on_unknown_outcome",
         "summary": "Delete a draft message.",
         "error_codes": ["CONFIRMATION_REQUIRED", "WRITE_OUTCOME_UNKNOWN", "NOT_FOUND"],
+    },
+    "draft.update": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Update an existing draft message without sending it.",
+        "error_codes": ["CONFLICT", "WRITE_OUTCOME_UNKNOWN", "NOT_FOUND"],
+    },
+    "draft.attach": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Add file or inline attachments to an existing draft.",
+        "error_codes": ["CONFLICT", "WRITE_OUTCOME_UNKNOWN", "NOT_FOUND", "INVALID_INPUT"],
+    },
+    "draft.detach": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Remove attachments from an existing draft by id or unique name.",
+        "error_codes": ["CONFLICT", "WRITE_OUTCOME_UNKNOWN", "NOT_FOUND", "INVALID_INPUT"],
+    },
+    # Mailbox settings
+    "mailbox.oof.get": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "Read the current out-of-office automatic-reply settings.",
+        "error_codes": ["CONNECTION_ERROR", "AUTH_ERROR"],
+    },
+    "mailbox.oof.set": {
+        "write": True,
+        "confirm": True,
+        "effect": "external_send",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Set out-of-office automatic replies for the configured mailbox.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "WRITE_OUTCOME_UNKNOWN", "INVALID_INPUT"],
+    },
+    "mailbox.tips.get": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "Read delivery, quota, moderation, and automatic-reply mail tips for recipients.",
+        "error_codes": ["INVALID_INPUT", "CONNECTION_ERROR", "AUTH_ERROR"],
+    },
+    "mailbox.delegates.list": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "List mailbox delegates and their folder permission levels.",
+        "error_codes": ["CONNECTION_ERROR", "AUTH_ERROR", "PERMISSION_ERROR"],
+    },
+    "mailbox.rules.list": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "List inbox rules and reusable JSON specifications.",
+        "error_codes": ["CONNECTION_ERROR", "AUTH_ERROR", "PERMISSION_ERROR"],
+    },
+    "mailbox.rules.get": {
+        "write": False,
+        "confirm": False,
+        "effect": "read",
+        "confirmation": "none",
+        "retry": "safe",
+        "summary": "Read an inbox rule by EWS rule id.",
+        "error_codes": ["INVALID_INPUT", "NOT_FOUND", "CONNECTION_ERROR"],
+    },
+    "mailbox.rules.create": {
+        "write": True,
+        "confirm": True,
+        "effect": "conditional",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Create a server-side inbox rule, which can affect future message delivery or forwarding.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "INVALID_RULE_SPEC", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "mailbox.rules.update": {
+        "write": True,
+        "confirm": True,
+        "effect": "conditional",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Update a server-side inbox rule, which can affect future message delivery or forwarding.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "INVALID_RULE_SPEC", "NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "mailbox.rules.delete": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Delete a server-side inbox rule.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "INVALID_INPUT", "NOT_FOUND", "WRITE_OUTCOME_UNKNOWN"],
     },
     # Calendar operations
     "calendar.list": {
@@ -280,6 +488,51 @@ COMMAND_SEMANTICS: dict[str, dict[str, Any]] = {
         "retry": "safe",
         "summary": "List the full mail folder tree.",
         "error_codes": ["CONNECTION_ERROR"],
+    },
+    "folder.create": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Create a mail folder at the mailbox root or under a parent folder.",
+        "error_codes": ["INVALID_FOLDER", "WRITE_OUTCOME_UNKNOWN", "PERMISSION_ERROR"],
+    },
+    "folder.rename": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Rename a non-system mail folder.",
+        "error_codes": ["INVALID_FOLDER", "INVALID_FOLDER_STATE", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "folder.move": {
+        "write": True,
+        "confirm": False,
+        "effect": "internal_modify",
+        "confirmation": "none",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Move a non-system mail folder under another folder.",
+        "error_codes": ["INVALID_FOLDER", "INVALID_FOLDER_STATE", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "folder.delete": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Delete a non-system mail folder with an explicit EWS deletion mode.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "INVALID_FOLDER_STATE", "WRITE_OUTCOME_UNKNOWN"],
+    },
+    "folder.empty": {
+        "write": True,
+        "confirm": True,
+        "effect": "internal_modify",
+        "confirmation": "required",
+        "retry": "never_on_unknown_outcome",
+        "summary": "Empty a mail folder with an explicit EWS deletion mode.",
+        "error_codes": ["CONFIRMATION_REQUIRED", "INVALID_INPUT", "WRITE_OUTCOME_UNKNOWN"],
     },
     # Configuration and Diagnostics
     "config.init": {
@@ -421,6 +674,18 @@ def _introspect_command(cmd_name: str, cmd: click.Command) -> dict[str, Any]:
     }
 
 
+def _introspect_group(prefix: str, group: click.Group) -> list[dict[str, Any]]:
+    """Recursively flatten a Click group into leaf command contracts."""
+    catalog: list[dict[str, Any]] = []
+    for sub_name, sub_cmd in sorted(group.commands.items()):
+        qualified_name = f"{prefix}.{sub_name}"
+        if isinstance(sub_cmd, click.Group):
+            catalog.extend(_introspect_group(qualified_name, sub_cmd))
+        else:
+            catalog.append(_introspect_command(qualified_name, sub_cmd))
+    return catalog
+
+
 def get_command_catalog() -> list[dict[str, Any]]:
     """Introspect all commands registered in exchange-cli."""
     from ..main import _COMMAND_MODULES
@@ -434,8 +699,7 @@ def get_command_catalog() -> list[dict[str, Any]]:
             mod = importlib.import_module(mod_path)
             obj = getattr(mod, mod_name)
             if isinstance(obj, click.Group):
-                for sub_name, sub_cmd in sorted(obj.commands.items()):
-                    catalog.append(_introspect_command(f"{mod_name}.{sub_name}", sub_cmd))
+                catalog.extend(_introspect_group(mod_name, obj))
             elif isinstance(obj, click.Command):
                 catalog.append(_introspect_command(mod_name, obj))
         except Exception:

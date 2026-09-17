@@ -15,6 +15,160 @@ def _safe_isoformat(value):
     return value.isoformat()
 
 
+def serialize_oof_settings(settings):
+    """Return the mailbox automatic-reply configuration in JSON-safe form."""
+    return {
+        "state": _safe_str(getattr(settings, "state", None)),
+        "external_audience": _safe_str(getattr(settings, "external_audience", None)),
+        "start": _safe_isoformat(getattr(settings, "start", None)),
+        "end": _safe_isoformat(getattr(settings, "end", None)),
+        "internal_reply": _safe_str(getattr(settings, "internal_reply", None)),
+        "external_reply": _safe_str(getattr(settings, "external_reply", None)),
+    }
+
+
+def serialize_mail_tip(mail_tip):
+    """Return an EWS MailTips result in a stable, JSON-safe shape."""
+    out_of_office = getattr(mail_tip, "out_of_office", None)
+    return {
+        "recipient": serialize_mailbox(getattr(mail_tip, "recipient_address", None)),
+        "pending_mail_tips": _safe_str(getattr(mail_tip, "pending_mail_tips", None)),
+        "out_of_office": (
+            {
+                "reply_body": _safe_str(getattr(out_of_office, "reply_body", None)),
+                "start": _safe_isoformat(getattr(out_of_office, "start", None)),
+                "end": _safe_isoformat(getattr(out_of_office, "end", None)),
+            }
+            if out_of_office is not None
+            else None
+        ),
+        "mailbox_full": getattr(mail_tip, "mailbox_full", None),
+        "custom_mail_tip": _safe_str(getattr(mail_tip, "custom_mail_tip", None)),
+        "total_member_count": getattr(mail_tip, "total_member_count", None),
+        "external_member_count": getattr(mail_tip, "external_member_count", None),
+        "max_message_size": getattr(mail_tip, "max_message_size", None),
+        "delivery_restricted": getattr(mail_tip, "delivery_restricted", None),
+        "is_moderated": getattr(mail_tip, "is_moderated", None),
+        "invalid_recipient": getattr(mail_tip, "invalid_recipient", None),
+    }
+
+
+def serialize_delegate(delegate):
+    """Return an EWS delegate and its mailbox permission levels."""
+    user_id = getattr(delegate, "user_id", None)
+    permissions = getattr(delegate, "delegate_permissions", None)
+    return {
+        "user": {
+            "sid": _safe_str(getattr(user_id, "sid", None)),
+            "primary_smtp_address": _safe_str(getattr(user_id, "primary_smtp_address", None)),
+            "display_name": _safe_str(getattr(user_id, "display_name", None)),
+            "distinguished_user": _safe_str(getattr(user_id, "distinguished_user", None)),
+            "external_user_identity": _safe_str(getattr(user_id, "external_user_identity", None)),
+        },
+        "permissions": {
+            field: _safe_str(getattr(permissions, field, None))
+            for field in (
+                "calendar_folder_permission_level",
+                "tasks_folder_permission_level",
+                "inbox_folder_permission_level",
+                "contacts_folder_permission_level",
+                "notes_folder_permission_level",
+                "journal_folder_permission_level",
+            )
+        },
+        "receive_copies_of_meeting_messages": bool(
+            getattr(delegate, "receive_copies_of_meeting_messages", False)
+        ),
+        "view_private_items": bool(getattr(delegate, "view_private_items", False)),
+    }
+
+
+_RULE_ADDRESS_FIELDS = {
+    "from_addresses",
+    "sent_to_addresses",
+    "forward_as_attachment_to_recipients",
+    "forward_to_recipients",
+    "redirect_to_recipients",
+    "send_sms_alert_to_recipients",
+}
+
+
+def _serialize_rule_item_id(value):
+    if value is None:
+        return None
+    result = {"id": _safe_str(getattr(value, "id", None))}
+    changekey = _safe_str(getattr(value, "changekey", None))
+    if changekey is not None:
+        result["changekey"] = changekey
+    return result
+
+
+def _serialize_rule_folder_action(value):
+    if value is None:
+        return None
+    folder_id = getattr(value, "folder_id", None)
+    if folder_id is not None:
+        return _serialize_rule_item_id(folder_id)
+    distinguished_folder_id = getattr(value, "distinguished_folder_id", None)
+    if distinguished_folder_id is not None:
+        return {"distinguished_id": _safe_str(getattr(distinguished_folder_id, "id", None))}
+    return None
+
+
+def _serialize_rule_component(component):
+    if component is None:
+        return None
+    result = {}
+    for field in component.FIELDS:
+        value = getattr(component, field.name, None)
+        if value is None:
+            continue
+        if field.name in _RULE_ADDRESS_FIELDS:
+            result[field.name] = [getattr(mailbox, "email_address", str(mailbox)) for mailbox in value]
+        elif field.name == "within_date_range":
+            result[field.name] = {
+                "start_date_time": _safe_isoformat(getattr(value, "start_date_time", None)),
+                "end_date_time": _safe_isoformat(getattr(value, "end_date_time", None)),
+            }
+        elif field.name == "within_size_range":
+            result[field.name] = {
+                "minimum_size": getattr(value, "minimum_size", None),
+                "maximum_size": getattr(value, "maximum_size", None),
+            }
+        elif field.name in {"copy_to_folder", "move_to_folder"}:
+            result[field.name] = _serialize_rule_folder_action(value)
+        elif field.name == "server_reply_with_message":
+            result[field.name] = _serialize_rule_item_id(value)
+        elif isinstance(value, (list, tuple)):
+            result[field.name] = list(value)
+        else:
+            result[field.name] = _safe_str(value) if not isinstance(value, (str, int, float, bool)) else value
+    return result
+
+
+def serialize_rule(rule):
+    """Return an inbox rule with a reusable declarative ``spec`` payload."""
+    spec = {
+        "display_name": _safe_str(getattr(rule, "display_name", None)),
+        "priority": getattr(rule, "priority", None),
+    }
+    is_enabled = getattr(rule, "is_enabled", None)
+    if is_enabled is not None:
+        spec["is_enabled"] = is_enabled
+    for field in ("conditions", "exceptions", "actions"):
+        value = _serialize_rule_component(getattr(rule, field, None))
+        if value is not None:
+            spec[field] = value
+    return {
+        "id": _safe_str(getattr(rule, "id", None)),
+        "spec": spec,
+        "status": {
+            "is_not_supported": getattr(rule, "is_not_supported", None),
+            "is_in_error": getattr(rule, "is_in_error", None),
+        },
+    }
+
+
 def _serialize_conversation_id(value):
     if value is None:
         return None
