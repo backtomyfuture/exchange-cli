@@ -7,6 +7,7 @@ from pathlib import Path
 from exchangelib import FileAttachment
 from exchangelib.errors import ResponseMessageError
 from exchangelib.folders import Folder
+from exchangelib.properties import ItemId
 
 from .errors import NOT_FOUND_EXCEPTIONS, CliError
 from .serializers import serialize_email_summary
@@ -358,15 +359,20 @@ def find_message(account, message_id: str):
     fetch = getattr(account, "fetch", None)
     if callable(fetch):
         try:
-            for item in fetch(ids=[message_id]):
+            # exchangelib unpacks a bare string as ItemId(*id). IDs containing
+            # "/" would then be treated as many one-character arguments and
+            # EWS would answer ErrorInvalidIdMalformed even though folder.get
+            # can load the same item.
+            for item in fetch(ids=[ItemId(id=message_id)]):
                 if isinstance(item, Exception):
                     if isinstance(item, NOT_FOUND_EXCEPTIONS):
-                        return None
+                        break
                     raise item
                 return item if item is not None and is_email_item(item) else None
-            return None
+            else:
+                return None
         except NOT_FOUND_EXCEPTIONS:
-            return None
+            pass
         except (AttributeError, TypeError):
             # Some account-like clients expose a non-compatible ``fetch``
             # method. Preserve the original folder-based lookup for them.

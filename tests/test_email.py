@@ -174,20 +174,29 @@ class TestEmailList:
 
 class TestEmailRead:
     def test_find_message_uses_global_fetch_for_custom_folder_items(self, mock_conn):
+        from exchangelib.properties import ItemId
+
         message = _mock_message("CUSTOM_FOLDER_MESSAGE")
         mock_conn.fetch.return_value = iter([message])
 
         assert _find_message(mock_conn, "CUSTOM_FOLDER_MESSAGE") is message
-        mock_conn.fetch.assert_called_once_with(ids=["CUSTOM_FOLDER_MESSAGE"])
+        mock_conn.fetch.assert_called_once()
+        fetched_ids = mock_conn.fetch.call_args.kwargs["ids"]
+        assert len(fetched_ids) == 1
+        assert isinstance(fetched_ids[0], ItemId)
+        assert fetched_ids[0].id == "CUSTOM_FOLDER_MESSAGE"
         mock_conn.inbox.get.assert_not_called()
 
-    def test_find_message_global_fetch_not_found_does_not_scan_standard_folders(self, mock_conn):
+    def test_find_message_falls_back_to_folder_scan_when_fetch_returns_not_found(self, mock_conn):
         from exchangelib.errors import ErrorItemNotFound
 
         mock_conn.fetch.return_value = iter([ErrorItemNotFound("missing")])
+        mock_conn.inbox.get.side_effect = DoesNotExist("missing")
+        message = _mock_message()
+        mock_conn.sent.get.return_value = message
 
-        assert _find_message(mock_conn, "MISSING") is None
-        mock_conn.inbox.get.assert_not_called()
+        assert _find_message(mock_conn, "MISSING") is message
+        mock_conn.inbox.get.assert_called_once_with(id="MISSING")
 
     def test_find_message_skips_only_not_found(self, mock_conn):
         mock_conn.fetch.side_effect = AttributeError("fetch unsupported")
@@ -221,6 +230,19 @@ class TestEmailRead:
         mock_conn.sent.get.return_value = message
 
         assert _find_message(mock_conn, "AAMkFAKEID") is message
+
+    def test_find_message_falls_back_when_fetch_rejects_slash_containing_ids(self, mock_conn):
+        from exchangelib.errors import ErrorInvalidIdMalformed
+
+        slash_id = "AAMkAGFm/PYuYAAA="
+        mock_conn.fetch.return_value = iter([ErrorInvalidIdMalformed("Id is malformed.")])
+        mock_conn.inbox.get.side_effect = ErrorInvalidIdMalformed("Id is malformed.")
+        mock_conn.sent.get.side_effect = ErrorInvalidIdMalformed("Id is malformed.")
+        message = _mock_message(slash_id)
+        mock_conn.drafts.get.return_value = message
+
+        assert _find_message(mock_conn, slash_id) is message
+        mock_conn.drafts.get.assert_called_once_with(id=slash_id)
 
     def test_read_message_not_found_on_fake_id(self, runner, mock_conn):
         from exchangelib.errors import ErrorInvalidIdMalformed
